@@ -32,16 +32,8 @@ docker-compose -f docker/docker-compose.yml up -d
 echo "⏳ Waiting for database to be ready..."
 sleep 10
 
-# Run database migrations
-echo "🗃️  Running database migrations..."
-docker-compose -f docker/docker-compose.yml exec server alembic upgrade head
-
 echo "✅ Genbase is ready!"
 echo ""
 echo "📱 Frontend (App): http://localhost:3000"
 echo "🔧 Backend API: http://localhost:8000"
 echo "🗃️  Database: localhost:5432"
-echo ""
-echo "To view logs: ./scripts/logs.sh"
-echo "To stop: ./scripts/teardown.sh"
-echo "To reset: ./scripts/reset.sh"

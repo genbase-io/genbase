@@ -150,7 +150,7 @@ export function PlanDetail({
             </div>
             <h3 className="text-lg font-medium mb-2">No Plan Generated Yet</h3>
             <p className="text-sm text-muted-foreground mb-6">
-              Run a plan to see what changes would be made to your infrastructure. This is a safe operation that doesn't make any actual changes.
+            {"Run a plan to see what changes would be made to your infrastructure. This is a safe operation that doesn't make any actual changes."}
             </p>
             <Button onClick={onRunPlan}>
               <RefreshCw className="h-4 w-4 mr-2" />
@@ -236,7 +236,7 @@ export function PlanDetail({
                         <AlertTriangle className="h-4 w-4" />
                         <AlertTitle>Ready to apply these changes?</AlertTitle>
                         <AlertDescription>
-                          Review the plan carefully, then click "Apply Plan" to make these changes to your infrastructure.
+                  {'Review the plan carefully, then click "Apply Plan" to make these changes to your infrastructure.'}
                         </AlertDescription>
                       </Alert>
                     )}

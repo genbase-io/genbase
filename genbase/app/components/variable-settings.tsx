@@ -411,7 +411,7 @@ export function VariableSettings() {
           <Alert className="mt-4">
             <AlertTitle>No variables</AlertTitle>
             <AlertDescription>
-              This project doesn't have any variables yet. Add a variable to get started.
+             {"This project doesn't have any variables yet. Add a variable to get started."}
             </AlertDescription>
           </Alert>
         )}

@@ -1,6 +1,6 @@
-# Contributing to GenBase
+# Contributing to Genbase
 
-Thanks for considering contributing to GenBase! This document outlines the process for contributing to this project.
+Thanks for considering contributing to Genbase! This document outlines the process for contributing to this project.
 
 ## Development Setup
 
@@ -67,4 +67,4 @@ The project structure has two main components:
 
 Feel free to open an issue if you have questions about contributing.
 
-Thank you for helping improve GenBase!
+Thank you for helping improve Genbase!

@@ -33,7 +33,7 @@ import { useCurrentProject, useWorkspace, useOperationStatus } from "@/lib/store
 import React from "react";
 import { StateDetail } from "./state";
 import { PlanDetail } from "./plan";
-import { InfraChart } from "./infra-chart";
+import { InfraChart } from "./chart/infra-chart";
 
 export function GroupDetail() {
   const { currentProjectId } = useCurrentProject();
@@ -334,7 +334,7 @@ export function GroupDetail() {
                     <Alert>
                       <AlertTitle>No state found</AlertTitle>
                       <AlertDescription>
-                        This project doesn't have any infrastructure state yet. Run a plan and apply to create resources.
+                        {"This project doesn't have any infrastructure state yet. Run a plan and apply to create resources."}
                       </AlertDescription>
                     </Alert>
                   )}

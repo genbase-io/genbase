@@ -75,6 +75,66 @@ export interface DestroyResult {
   workspace: string;
 }
 
+export interface CodeBlock {
+  type?: string;
+  name: string;
+  address: string;
+  config: any;
+  _metadata: {
+    group_path: string;
+    file_name: string;
+    block_type: string;
+  };
+}
+
+// New interface for dependencies
+export interface Dependency {
+  from: string;
+  to: string;
+  type: string;
+  target_attribute?: string;
+  target_output?: string;
+}
+
+export interface ParsedCode {
+  project_id: string;
+  branch: string;
+  files_processed: number;
+  total_files: number;
+  blocks: {
+    resource?: CodeBlock[];
+    module?: CodeBlock[];
+    data?: CodeBlock[];
+    output?: CodeBlock[];
+    variable?: CodeBlock[];
+    locals?: CodeBlock[];
+    provider?: CodeBlock[];
+    terraform?: CodeBlock[];
+  };
+  dependencies: Dependency[]; // New field for dependencies
+  parse_errors?: any[];
+}
+
+// Chat interfaces
+export interface ChatSession {
+  id: string;
+  title?: string;
+  branch: string;
+  created_at: string;
+  last_activity?: string;
+  message_count: number;
+}
+
+export interface ChatMessage {
+  id: string;
+  role: "user" | "assistant" | "system" | "tool";
+  content: string;
+  timestamp: string;
+  tool_calls?: any[];
+  tool_call_id?: string;
+  reasoning_content?: string;
+}
+
 // API client with project management functions
 const apiClient = {
   // Project functions
@@ -194,6 +254,52 @@ const apiClient = {
     const response = await axios.post(`${API_URL}/projects/${projectId}/operations/destroy`, {
       workspace: workspace || 'default'
     });
+    return response.data.data;
+  },
+
+  async parseProjectCode(projectId: string, branch: string = "main"): Promise<ParsedCode> {
+    const response = await axios.get(`${API_URL}/projects/${projectId}/code/?branch=${branch}`);
+    return response.data.data;
+  },
+
+  async listTerraformFiles(projectId: string, branch: string = "main"): Promise<any> {
+    const response = await axios.get(`${API_URL}/projects/${projectId}/code/files?branch=${branch}`);
+    return response.data.data;
+  },
+
+  // Remove the compare configurations function since we removed that endpoint
+  // async compareConfigurations() {} // REMOVED
+
+  // Chat functions
+  async createChatSession(projectId: string, title?: string): Promise<ChatSession> {
+    const response = await axios.post(`${API_URL}/projects/${projectId}/chat/sessions`, {
+      title
+    });
+    return response.data.data;
+  },
+
+  async listChatSessions(projectId: string): Promise<ChatSession[]> {
+    const response = await axios.get(`${API_URL}/projects/${projectId}/chat/sessions`);
+    return response.data.data;
+  },
+
+  async deleteChatSession(projectId: string, sessionId: string): Promise<boolean> {
+    const response = await axios.delete(`${API_URL}/projects/${projectId}/chat/sessions?session_id=${sessionId}`);
+    return response.data.success;
+  },
+
+  async sendChatMessage(projectId: string, sessionId: string, content: string): Promise<ChatMessage> {
+    const response = await axios.post(`${API_URL}/projects/${projectId}/chat/messages`, {
+      session_id: sessionId,
+      content
+    });
+    return response.data.data;
+  },
+
+  async getChatMessages(projectId: string, sessionId: string): Promise<ChatMessage[]> {
+    const response = await axios.get(
+      `${API_URL}/projects/${projectId}/chat/messages?session_id=${sessionId}`
+    );
     return response.data.data;
   }
 };

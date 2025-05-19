@@ -43,7 +43,7 @@ interface TreeItem {
 
 export default function GroupsTree() {
   const { currentProjectId } = useCurrentProject();
-  const { selectedGroupPath, setSelectedGroupPath, setSelectedGroupDetails } = useSelectedGroup();
+  const { selectedGroupPath, setSelectedGroupPath } = useSelectedGroup();
   
   const [treeItems, setTreeItems] = useState<TreeItem[]>([]);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
@@ -134,7 +134,7 @@ export default function GroupsTree() {
     
     try {
       const groupDetails = await apiClient.getGroup(currentProjectId, groupPath);
-      setSelectedGroupDetails(groupDetails);
+    
     } catch (error) {
       console.error("Failed to load group details:", error);
       toast.error("Failed to load group details");
@@ -197,7 +197,6 @@ export default function GroupsTree() {
       
       // Select the newly created group
       setSelectedGroupPath(group.path);
-      setSelectedGroupDetails(group);
     } catch (error) {
       console.error("Failed to create group:", error);
       toast.error("Failed to create group");
