@@ -1,0 +1,62 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  db:
+    image: postgres:15-alpine
+    container_name: genbase-db
+    environment:
+      POSTGRES_DB: genbase
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - genbase-network
+
+  # Backend Server
+  server:
+    build:
+      context: ../genbase/server
+      dockerfile: Dockerfile
+    container_name: genbase-server
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/genbase
+      APP_ENV: development
+      LOG_LEVEL: DEBUG
+    volumes:
+      - ../genbase/server/src:/app/src
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+    networks:
+      - genbase-network
+    restart: unless-stopped
+
+  # Frontend App
+  app:
+    build:
+      context: ../genbase/app
+      dockerfile: Dockerfile
+    container_name: genbase-app
+    environment:
+      NEXT_PUBLIC_SERVER_BASE_URL: http://localhost:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - server
+    networks:
+      - genbase-network
+    restart: unless-stopped
+
+
+
+volumes:
+  postgres_data:
+
+networks:
+  genbase-network:
+    driver: bridge

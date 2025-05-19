@@ -3,3 +3,4 @@ test/*
 .env
 .terraform
 *.tfstate
+.repomix
