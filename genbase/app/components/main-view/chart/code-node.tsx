@@ -1,7 +1,6 @@
-// code-node.tsx
 "use client";
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Handle, Position, NodeProps } from 'reactflow';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -13,13 +12,22 @@ import {
   FileOutput,
   Code,
   GitBranch,
-  Info,
-  BoxIcon as Module
+  BoxIcon as Module,
+  MessageSquare,
+  Plus
 } from 'lucide-react';
 import { CodeNodeData } from './hierarchy-utils';
-import { useInfraChartState } from '@/lib/store';
+import { useInfraChartState, useChatEditorContent, useChat } from '@/lib/store';
+import { ChangeType, getChangeColor, hasChanges } from './comparison-utils';
+import { getProviderLogo } from '@/lib/provider-icons';
+import { toast } from 'sonner';
 
-// Get icon for different block types
+// Extended CodeNodeData to include comparison information
+export interface ExtendedCodeNodeData extends CodeNodeData {
+  changeType?: ChangeType;
+}
+
+// Get fallback icon for different block types when provider icon is not available
 export const getBlockIcon = (blockType: string) => {
   switch (blockType) {
     case 'resource':
@@ -94,69 +102,241 @@ export const getBlockColors = (blockType: string) => {
   }
 };
 
-// Code node component - simplified with no configuration displayed in the node
-export const CodeNode: React.FC<NodeProps<CodeNodeData>> = ({ id, data, selected }) => {
-  const { setSelectedNodeData } = useInfraChartState();
-  const colors = getBlockColors(data.blockType);
+// Change indicator dot component
+const ChangeIndicator: React.FC<{ changeType?: ChangeType }> = ({ changeType }) => {
+  if (!changeType || changeType === 'unchanged') {
+    return null;
+  }
 
-  const handleShowDetails = () => {
+  const color = getChangeColor(changeType);
+  const size = 'h-6 w-6';
+  
+  return (
+    <div 
+      className={`${size} rounded-full absolute -top-2 -right-2 border-2 border-white z-10`}
+      style={{ backgroundColor: color }}
+      title={`${changeType.charAt(0).toUpperCase() + changeType.slice(1)} resource`}
+    />
+  );
+};
+
+// Provider Icon component with loading state and fallback
+const ProviderIcon: React.FC<{ block: any; fallbackIcon: React.ReactNode }> = ({ 
+  block, 
+  fallbackIcon 
+}) => {
+  const [logoUrl, setLogoUrl] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadProviderLogo = async () => {
+      try {
+        const logo = await getProviderLogo(block);
+        if (isMounted) {
+          setLogoUrl(logo);
+          setLoading(false);
+        }
+      } catch (err) {
+        if (isMounted) {
+          setError(true);
+          setLoading(false);
+        }
+      }
+    };
+
+    // Only try to load provider logos for resources and data sources
+    if (block._metadata?.block_type === 'resource' || block._metadata?.block_type === 'data') {
+      loadProviderLogo();
+    } else {
+      setLoading(false);
+    }
+
+    return () => {
+      isMounted = false;
+    };
+  }, [block]);
+
+  // Show fallback icon while loading or if no logo found
+  if (loading || error || !logoUrl) {
+    return <>{fallbackIcon}</>;
+  }
+  return (
+    <img 
+      src={logoUrl} 
+      alt="Provider logo" 
+      className="h-4 w-4 object-contain"
+      onError={() => setError(true)}
+    />
+  );
+};
+
+// Code node component with provider icons and 4 connection handles
+export const CodeNode: React.FC<NodeProps<ExtendedCodeNodeData>> = ({ id, data, selected }) => {
+  const { setSelectedNodeData } = useInfraChartState();
+  const { currentChatSessionId } = useChat();
+  const { appendContent } = useChatEditorContent(currentChatSessionId);
+  const [isHovered, setIsHovered] = useState(false);
+  
+  const colors = getBlockColors(data.blockType);
+  const showChanges = data.changeType && hasChanges(data.changeType);
+
+  // Apply different styling based on change type
+  let nodeStyle = `w-48 shadow-md transition-all duration-200 p-0 ${colors.border} ${colors.bg} ${colors.hover} cursor-pointer relative`;
+  
+  // Add special styling for deleted nodes
+  if (data.changeType === 'deleted') {
+    nodeStyle += ' opacity-60 border-dashed';
+  }
+
+  // Generate the reference string for this block
+  const generateBlockReference = () => {
+    const blockType = data.blockType;
+    const label1 = data.label;
+    const label2 = data.resourceType;
+    
+    if (label2) {
+      return `@${blockType}:${label1}.${label2}`;
+    } else {
+      return `@${blockType}:${label1}`;
+    }
+  };
+
+
+// Handle adding reference to chat
+const handleAddToChat = (e: React.MouseEvent) => {
+  e.preventDefault();
+  e.stopPropagation();
+  
+  if (!currentChatSessionId) {
+    toast.error('Please open a chat session first');
+    return;
+  }
+  
+  const reference = generateBlockReference();
+  appendContent(reference);
+};
+
+
+  // The entire card is now clickable to show details
+  const handleShowDetails = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    console.log('Node clicked:', data.address); // Debug log
     setSelectedNodeData(data);
   };
 
+  // Create block object for provider icon lookup
+  const blockForIcon = {
+    ...data,
+    _metadata: {
+      block_type: data.blockType,
+      group_path: data.groupPath,
+      file_name: data.fileName
+    },
+    config: data.config,
+    type: data.resourceType,
+    name: data.label
+  };
+
   return (
-    <div className={`relative ${selected ? 'ring-2 ring-primary rounded-lg' : ''}`}>
-      <Card className={`w-48 shadow-md transition-all duration-200 p-0 ${colors.border} ${colors.bg} ${colors.hover}`}>
-        <CardHeader className="p-3">
+    <div 
+      className={`relative ${selected ? 'ring-2 ring-primary rounded-lg' : ''}`}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+    >
+      <Card 
+        className={nodeStyle}
+        onClick={handleShowDetails}
+        onMouseDown={(e) => e.stopPropagation()} // Prevent drag behavior
+        style={{ 
+          pointerEvents: 'all', // Ensure the card can receive pointer events
+          userSelect: 'none' // Prevent text selection
+        }}
+      >
+        <CardHeader className="p-3 relative">
+          {/* Change indicator dot */}
+          <ChangeIndicator changeType={data.changeType} />
+          
+          {/* Chat reference button - only show on hover */}
+          {isHovered && (
+            <Button
+              size="icon"
+              variant="secondary"
+              className="absolute -top-2 -left-2 h-6 w-6 rounded-full shadow-md bg-primary text-primary-foreground hover:bg-primary/90 z-20"
+              onClick={handleAddToChat}
+              title={`Add ${generateBlockReference()} to chat`}
+            >
+              <Plus className="h-3 w-3" />
+            </Button>
+          )}
+          
+          <Badge variant="secondary" className={`text-xs flex-shrink-0 ${colors.badge}`}>
+            {data.blockType}
+          </Badge>
           <div className="flex justify-between items-start">
             <div className="flex items-center space-x-2 flex-1 min-w-0">
-              {getBlockIcon(data.blockType)}
+              <ProviderIcon 
+                block={blockForIcon}
+                fallbackIcon={getBlockIcon(data.blockType)}
+              />
               <div className="min-w-0 flex-1">
                 <CardTitle className="text-sm font-semibold truncate" title={data.label}>
                   {data.label}
                 </CardTitle>
                 {data.resourceType && (
-                  <div className="text-xs text-muted-foreground truncate">
+                  <div className="text-xs text-muted-foreground truncate" title={data.resourceType}>
                     {data.resourceType}
                   </div>
                 )}
               </div>
             </div>
-            <Badge variant="secondary" className={`text-xs flex-shrink-0 ml-2 ${colors.badge}`}>
-              {data.blockType}
-            </Badge>
           </div>
         </CardHeader>
-        
-        <CardContent className="p-3 pt-0">
-          <div className="">
-            
-            {/* Action button */}
-            <Button
-              variant="outline"
-              size="sm"
-              className="w-full text-xs h-7"
-              onClick={handleShowDetails}
-            >
-              <Info className="h-3 w-3 mr-1" />
-              View Details
-            </Button>
-          </div>
-        </CardContent>
       </Card>
 
-      {/* Connection handles */}
+      {/* 4 connection handles - both source and target on each side */}
+      
+      {/* Top handle - target */}
       <Handle 
         type="target" 
-        position={Position.Left} 
-        className="w-2 h-2 border-2 border-muted-foreground bg-background" 
+        position={Position.Top} 
+        id="handle-top"
+        className="w-3 h-3 border-2 border-muted-foreground bg-background"
+        style={{ pointerEvents: 'none' }} // Handles shouldn't interfere with clicking
       />
+      
+      {/* Right handle - target */}
+      <Handle 
+        type="target" 
+        position={Position.Right} 
+        id="handle-right"
+        className="w-3 h-3 border-2 border-muted-foreground bg-background"
+        style={{ pointerEvents: 'none' }}
+      />
+      
+      {/* Bottom handle - source */}
       <Handle 
         type="source" 
-        position={Position.Right} 
-        className="w-2 h-2 border-2 border-muted-foreground bg-background" 
+        position={Position.Bottom} 
+        id="handle-bottom"
+        className="w-3 h-3 border-2 border-muted-foreground bg-background"
+        style={{ pointerEvents: 'none' }}
+      />
+      
+      {/* Left handle - source */}
+      <Handle 
+        type="source" 
+        position={Position.Left} 
+        id="handle-left"
+        className="w-3 h-3 border-2 border-muted-foreground bg-background"
+        style={{ pointerEvents: 'none' }}
       />
     </div>
   );
 };
+
 
 export default CodeNode;

@@ -27,7 +27,7 @@ import {
 } from '@/components/ui/tooltip';
 import { Badge } from '@/components/ui/badge';
 
-import { useCurrentProject, useInfraChartState } from '@/lib/store';
+import { useCurrentProject, useInfraChartState, useChat } from '@/lib/store';
 import apiClient, { CodeBlock, ParsedCode } from '@/lib/api';
 
 import {
@@ -35,11 +35,12 @@ import {
   FileCode,
   RefreshCw,
   Info,
+  GitBranch
 } from 'lucide-react';
 
 import CodeNode from './code-node';
 import InfoPanel from './info-panel';
-import NodeDetailsPanel from './node-details-panel';
+import NodeDetailsPanelWithComparison from './node-details-panel';
 import { 
   buildHierarchy, 
   calculateLayout, 
@@ -47,6 +48,8 @@ import {
   CodeNodeData,
   LAYOUT
 } from './hierarchy-utils';
+import { createEdgesFromDependencies } from './dependency-utils';
+import { compareCodeBetweenBranches, BranchComparison, hasChanges, getChangeColor } from './comparison-utils';
 
 const nodeTypes: NodeTypes = {
   code: CodeNode,
@@ -55,16 +58,25 @@ const nodeTypes: NodeTypes = {
 function InfraChartContent() {
   const { currentProjectId } = useCurrentProject();
   const { selectedNodeData, setShowInfoPanel, setInfoPanelPosition } = useInfraChartState();
+  const { currentChatSessionId } = useChat();
   
   const [nodes, setNodes] = useState<Node[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [codeData, setCodeData] = useState<ParsedCode | null>(null);
+  const [mainBranchData, setMainBranchData] = useState<ParsedCode | null>(null);
+  
+  // Comparison state
+  const [branchComparison, setBranchComparison] = useState<BranchComparison | null>(null);
+  const [loadingComparison, setLoadingComparison] = useState<boolean>(false);
   
   // Search functionality
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [searchResults, setSearchResults] = useState<Node[]>([]);
+  
+  // Dependencies toggle
+  const [showDependencies, setShowDependencies] = useState<boolean>(true);
   
   const reactFlowInstance = useReactFlow();
 
@@ -80,22 +92,68 @@ function InfraChartContent() {
     []
   );
 
-  // Parse code data and create layout with subflows
-  const parseCodeData = useCallback((codeData: ParsedCode) => {
-    const blocks: CodeBlock[] = [];
+  // Parse code data and create layout with edges - FIXED VERSION
+  const parseCodeData = useCallback((codeData: ParsedCode, mainBranchData?: ParsedCode, comparison?: BranchComparison) => {
+    let allBlocks: CodeBlock[] = [];
+    let allDependencies: any[] = [];
     
-    // Collect all blocks from different types
-    Object.values(codeData.blocks).forEach(blockArray => {
-      if (Array.isArray(blockArray)) {
-        blocks.push(...blockArray);
+    if (comparison && mainBranchData) {
+      // COMPARISON MODE: Union of all blocks from both branches
+      
+      // 1. Get all blocks from compare branch (current codeData)
+      Object.values(codeData.blocks).forEach(blockArray => {
+        if (Array.isArray(blockArray)) {
+          allBlocks.push(...blockArray);
+        }
+      });
+      
+      // 2. Add deleted blocks from main branch that don't exist in compare branch
+      for (const [blockKey, blockComparison] of comparison.blockComparisons) {
+        if (blockComparison.changeType === 'deleted') {
+          // Only add if not already in allBlocks
+          const existsInCurrent = allBlocks.some(block => 
+            (block.address || `${block._metadata.block_type}.${block.name}`) === blockKey
+          );
+          if (!existsInCurrent) {
+            allBlocks.push(blockComparison.block);
+          }
+        }
       }
-    });
+      
+      // 3. Combine dependencies from both branches
+      allDependencies = [...(codeData.dependencies || [])];
+      
+      // Add dependencies from main branch that are not in compare branch
+      if (mainBranchData.dependencies) {
+        mainBranchData.dependencies.forEach(mainDep => {
+          const existsInCurrent = allDependencies.some(dep => 
+            dep.from === mainDep.from && dep.to === mainDep.to && dep.type === mainDep.type
+          );
+          if (!existsInCurrent) {
+            // Mark this dependency as potentially removed
+            allDependencies.push({
+              ...mainDep,
+              _isFromMain: true
+            });
+          }
+        });
+      }
+      
+    } else {
+      // NORMAL MODE: Just current branch blocks
+      Object.values(codeData.blocks).forEach(blockArray => {
+        if (Array.isArray(blockArray)) {
+          allBlocks.push(...blockArray);
+        }
+      });
+      allDependencies = codeData.dependencies || [];
+    }
 
     // Group blocks by their group_path only (not by individual files)
     const fileGroups: FileGroup[] = [];
     const groupPathMap = new Map<string, CodeBlock[]>();
 
-    blocks.forEach(block => {
+    allBlocks.forEach(block => {
       const groupPath = block._metadata.group_path || '';
       
       if (!groupPathMap.has(groupPath)) {
@@ -108,14 +166,41 @@ function InfraChartContent() {
       fileGroups.push({ path, blocks });
     });
 
-    // Build hierarchy and calculate layout with subflows
+    // Build hierarchy and calculate layout
     const hierarchy = buildHierarchy(fileGroups);
     const { nodes: layoutNodes } = calculateLayout(hierarchy);
 
-    return { nodes: layoutNodes, edges: [] };
-  }, []);
+    // If comparison mode, update nodes with comparison data
+    let finalNodes = layoutNodes;
+    if (comparison) {
+      finalNodes = layoutNodes.map(node => {
+        if (node.type === 'code') {
+          const nodeAddress = node.data.address;
+          const blockComparison = comparison.blockComparisons.get(nodeAddress);
+          return {
+            ...node,
+            data: {
+              ...node.data,
+              changeType: blockComparison?.changeType || 'unchanged'
+            }
+          };
+        }
+        return node;
+      });
+    }
 
-  // Fetch code data for the project
+    // Create edges from combined dependencies with comparison context
+    const dependencyEdges = createEdgesFromDependencies(
+      allDependencies, 
+      finalNodes,
+      showDependencies,
+      comparison
+    );
+
+    return { nodes: finalNodes, edges: dependencyEdges };
+  }, [showDependencies]);
+
+  // Fetch code data for the project - UPDATED
   const fetchCodeData = useCallback(async (refresh = false) => {
     if (!currentProjectId) return;
     
@@ -123,36 +208,86 @@ function InfraChartContent() {
       setLoading(true);
       setError(null);
       
-      const code = await apiClient.parseProjectCode(currentProjectId, 'main');
+      // Determine which branch to load
+      let branch = 'main';
+      if (currentChatSessionId && currentChatSessionId !== 'main') {
+        branch = currentChatSessionId;
+      }
+      
+      const code = await apiClient.parseProjectCode(currentProjectId, branch);
       setCodeData(code);
       
-      // Parse code and update nodes/edges with subflow layout
-      const { nodes: layoutNodes, edges: parsedEdges } = parseCodeData(code);
-      setNodes(layoutNodes);
-      setEdges(parsedEdges);
+      // If we have a chat session selected (not main), enable comparison mode
+      if (currentChatSessionId && currentChatSessionId !== 'main') {
+        await enableComparisonMode(code);
+      } else {
+        // Normal mode - clear comparison data
+        setBranchComparison(null);
+        setMainBranchData(null);
+        const { nodes: layoutNodes, edges: parsedEdges } = parseCodeData(code);
+        setNodes(layoutNodes);
+        setEdges(parsedEdges);
+      }
       
       // Auto-fit view if we have nodes
-      if (layoutNodes.length > 0) {
-        setTimeout(() => {
-          if (reactFlowInstance) {
-            reactFlowInstance.fitView({
-              padding: 0.15,
-              includeHiddenNodes: false,
-              minZoom: 0.1,
-              maxZoom: 1.5,
-            });
-          }
-        }, 200);
-      }
+      setTimeout(() => {
+        if (reactFlowInstance) {
+          reactFlowInstance.fitView({
+            padding: 0.15,
+            includeHiddenNodes: false,
+            minZoom: 0.1,
+            maxZoom: 1.5,
+          });
+        }
+      }, 200);
     } catch (err) {
       console.error("Failed to fetch code:", err);
       setError("Failed to load project code. Please try again.");
     } finally {
       setLoading(false);
     }
-  }, [currentProjectId, parseCodeData, reactFlowInstance]);
+  }, [currentProjectId, currentChatSessionId, parseCodeData, reactFlowInstance]);
 
-  // Fetch code data when project changes
+  // Enable comparison mode - UPDATED
+  const enableComparisonMode = useCallback(async (currentCode: ParsedCode) => {
+    if (!currentProjectId) return;
+    
+    try {
+      setLoadingComparison(true);
+      
+      // Fetch main branch code for comparison
+      const mainCode = await apiClient.parseProjectCode(currentProjectId, 'main');
+      setMainBranchData(mainCode);
+      
+      // Compare the branches
+      const comparison = compareCodeBetweenBranches(mainCode, currentCode);
+      setBranchComparison(comparison);
+      
+      // Parse code with comparison data using the fixed logic
+      const { nodes: layoutNodes, edges: parsedEdges } = parseCodeData(currentCode, mainCode, comparison);
+      setNodes(layoutNodes);
+      setEdges(parsedEdges);
+      
+    } catch (err) {
+      console.error("Failed to enable comparison mode:", err);
+      // Fall back to normal mode
+      const { nodes: layoutNodes, edges: parsedEdges } = parseCodeData(currentCode);
+      setNodes(layoutNodes);
+      setEdges(parsedEdges);
+    } finally {
+      setLoadingComparison(false);
+    }
+  }, [currentProjectId, parseCodeData]);
+
+  // Re-create edges when dependencies toggle changes
+  useEffect(() => {
+    if (codeData) {
+      const { edges: newEdges } = parseCodeData(codeData, mainBranchData || undefined, branchComparison || undefined);
+      setEdges(newEdges);
+    }
+  }, [showDependencies, codeData, mainBranchData, branchComparison, parseCodeData]);
+
+  // Fetch code data when project or chat session changes
   useEffect(() => {
     fetchCodeData();
   }, [fetchCodeData]);
@@ -230,6 +365,23 @@ function InfraChartContent() {
     }
   };
 
+  // Get current branch name for display
+  const getCurrentBranch = () => {
+    if (currentChatSessionId && currentChatSessionId !== 'main') {
+      return currentChatSessionId;
+    }
+    return 'main';
+  };
+
+  // Get comparison status for display
+  const getComparisonStatus = () => {
+    if (branchComparison) {
+      const { summary } = branchComparison;
+      return `${summary.created} created, ${summary.modified} modified, ${summary.deleted} deleted`;
+    }
+    return null;
+  };
+
   if (error) {
     return (
       <div className="flex items-center justify-center h-full w-full">
@@ -251,6 +403,9 @@ function InfraChartContent() {
         <div className="flex flex-col items-center">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
           <p className="mt-2 text-sm text-muted-foreground">Loading project code...</p>
+          {loadingComparison && (
+            <p className="mt-1 text-xs text-muted-foreground">Loading comparison data...</p>
+          )}
         </div>
       </div>
     );
@@ -297,22 +452,36 @@ function InfraChartContent() {
           edgesFocusable={false}
           nodeDragThreshold={1}
           proOptions={{ hideAttribution: true }}
-          nodesDraggable={false} // Disable dragging to maintain hierarchy
+          nodesDraggable={false}
           panOnScroll={true}
           panOnScrollSpeed={0.8}
           zoomOnScroll={true}
           zoomOnDoubleClick={false}
+          selectNodesOnDrag={false}
+          onNodeClick={(event, node) => {
+            // Debug log for node clicks
+            console.log('ReactFlow node clicked:', node.id, node.data);
+            if (node.type === 'code') {
+              event.stopPropagation();
+            }
+          }}
         >
-          <Background  gap={20} size={1} />
+          <Background gap={20} size={1} />
+          
           <Controls 
             showInteractive={false}
             position="bottom-right"
             style={{ background: 'white', border: '1px solid #ddd' }}
           />
+          
           <MiniMap 
             nodeStrokeColor="#aaa"
             nodeColor={(node) => {
               if (node.type === 'group') return '#f0f0f0';
+              // Color nodes based on change type in comparison mode
+              if (branchComparison && node.data?.changeType) {
+                return getChangeColor(node.data.changeType);
+              }
               return '#fff';
             }}
             nodeBorderRadius={8}
@@ -328,6 +497,21 @@ function InfraChartContent() {
           {/* Top control panel */}
           <Panel position="top-left" className="bg-background/95 backdrop-blur-sm border rounded-md shadow-sm p-3 z-10">
             <div className="flex items-center space-x-3">
+              {/* Current branch indicator */}
+              {/* <div className="flex items-center space-x-2">
+                <GitBranch className="h-4 w-4 text-muted-foreground" />
+                <Badge variant="outline" className="text-xs">
+                  {getCurrentBranch()}
+                </Badge>
+              </div> */}
+              
+              {/* Comparison status */}
+              {/* {branchComparison && (
+                <div className="text-xs text-muted-foreground">
+                  {getComparisonStatus()}
+                </div>
+              )} */}
+              
               {/* Search */}
               <div className="relative w-56">
                 <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -339,6 +523,27 @@ function InfraChartContent() {
                 />
               </div>
               
+              {/* Dependencies toggle */}
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant={showDependencies ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setShowDependencies(!showDependencies)}
+                      className="flex items-center space-x-1"
+                    >
+                      <span className="text-xs">
+                        Dependencies
+                      </span>
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {showDependencies ? 'Hide' : 'Show'} dependency connections
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+              
               {/* Refresh */}
               <TooltipProvider>
                 <Tooltip>
@@ -347,9 +552,9 @@ function InfraChartContent() {
                       variant="outline" 
                       size="icon" 
                       onClick={handleRefresh}
-                      disabled={loading}
+                      disabled={loading || loadingComparison}
                     >
-                      <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+                      <RefreshCw className={`h-4 w-4 ${(loading || loadingComparison) ? 'animate-spin' : ''}`} />
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent>Refresh</TooltipContent>
@@ -376,13 +581,14 @@ function InfraChartContent() {
           
           {/* Search results panel */}
           {searchResults.length > 0 && (
-            <Panel position="top-right" className="bg-background/95 backdrop-blur-sm border rounded-md shadow-sm p-3 max-w-xs max-h-60 overflow-auto z-10">
+            <Panel position="bottom-right" className="bg-background/95 backdrop-blur-sm border rounded-md shadow-sm p-3 max-w-xs max-h-60 overflow-auto z-10" style={{ bottom: '120px' }}>
               <div className="text-sm font-medium mb-2">
                 Found {searchResults.length} results
               </div>
               <div className="space-y-2">
                 {searchResults.map((result, index) => {
                   const data = result.data as CodeNodeData;
+                  const changeType = (data as any).changeType;
                   return (
                     <Button 
                       key={`search-result-${index}-${result.id}`}
@@ -393,9 +599,17 @@ function InfraChartContent() {
                     >
                       <div className="flex items-center w-full">
                         <span className="truncate flex-1 text-left">{data.label}</span>
-                        <Badge variant="outline" className="ml-2 text-xs">
-                          {data.blockType}
-                        </Badge>
+                        <div className="flex items-center space-x-1 ml-2">
+                          <Badge variant="outline" className="text-xs">
+                            {data.blockType}
+                          </Badge>
+                          {changeType && hasChanges(changeType) && (
+                            <div 
+                              className="h-2 w-2 rounded-full"
+                              style={{ backgroundColor: getChangeColor(changeType) }}
+                            />
+                          )}
+                        </div>
                       </div>
                     </Button>
                   );
@@ -412,7 +626,7 @@ function InfraChartContent() {
       {/* Right sidebar for node details */}
       {selectedNodeData && (
         <div className="w-96 h-full flex-shrink-0">
-          <NodeDetailsPanel />
+          <NodeDetailsPanelWithComparison branchComparison={branchComparison || undefined} />
         </div>
       )}
     </div>

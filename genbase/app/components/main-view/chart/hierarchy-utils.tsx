@@ -1,4 +1,4 @@
-// hierarchy-utils.ts - Fixed to handle root blocks and single-level groups correctly
+// hierarchy-utils.ts - Enhanced to handle comparison mode with deleted blocks
 import { Node } from 'reactflow';
 import { CodeBlock } from '@/lib/api';
 
@@ -28,21 +28,21 @@ export interface HierarchyNode {
 
 // Constants for layout calculation
 export const LAYOUT = {
-  PADDING: 30,                 // Padding inside group nodes
+  PADDING: 40,                 
   BLOCK_WIDTH: 200,
   BLOCK_HEIGHT: 120,
-  BLOCK_SPACING: 20,           // Spacing between blocks
-  BLOCKS_PER_ROW: 3,
-  MIN_GROUP_WIDTH: 250,        // Minimum width for group nodes
-  MIN_GROUP_HEIGHT: 150,       // Minimum height for group nodes
-  GROUP_SPACING: 50,           // Spacing between group nodes
-  ROOT_BLOCK_SPACING: 30,      // Extra spacing for root-level blocks
-  TITLE_HEIGHT: 40,            // Height reserved for group title
-  INITIAL_X: 50,               // Starting X position
-  INITIAL_Y: 50                // Starting Y position
+  BLOCK_SPACING: 40,           
+  BLOCKS_PER_ROW: 3,           
+  MIN_GROUP_WIDTH: 300,        
+  MIN_GROUP_HEIGHT: 180,       
+  GROUP_SPACING: 80,           
+  ROOT_BLOCK_SPACING: 50,      
+  TITLE_HEIGHT: 50,            
+  INITIAL_X: 80,               
+  INITIAL_Y: 80                
 };
 
-// Create hierarchical structure from file paths
+// Create hierarchical structure from file paths - ENHANCED FOR COMPARISON
 export const buildHierarchy = (fileGroups: FileGroup[]): HierarchyNode => {
   const root: HierarchyNode = {
     name: 'root',
@@ -74,7 +74,7 @@ export const buildHierarchy = (fileGroups: FileGroup[]): HierarchyNode => {
 
   // Create group nodes for non-root paths
   groupedBlocks.forEach((blocks, path) => {
-    const parts = path.split('/');
+    const parts = path.split('/').filter(part => part.length > 0); // Filter empty parts
     let current = root;
 
     // Navigate through the hierarchy, creating nodes as needed
@@ -165,7 +165,7 @@ const calculateGroupSize = (node: HierarchyNode): { width: number, height: numbe
   return { width, height };
 };
 
-// Create React Flow nodes with proper parent-child relationships
+// Create React Flow nodes with proper parent-child relationships - ENHANCED FOR COMPARISON
 export const calculateLayout = (hierarchy: HierarchyNode): { nodes: Node[] } => {
   const nodes: Node[] = [];
   let nodeCounter = 0;
@@ -187,7 +187,20 @@ export const calculateLayout = (hierarchy: HierarchyNode): { nodes: Node[] } => 
       const blockX = startPosition.x + col * (LAYOUT.BLOCK_WIDTH + LAYOUT.BLOCK_SPACING);
       const blockY = startPosition.y + row * (LAYOUT.BLOCK_HEIGHT + LAYOUT.BLOCK_SPACING);
       
+      // Use address as ID if available, otherwise generate one
       const nodeId = block.address || idGenerator();
+      
+      // Determine node style based on block metadata
+      let nodeStyle: any = {
+        pointerEvents: 'all',
+        zIndex: parentId ? 10 : 5, // Nodes inside groups have higher z-index
+      };
+
+      // Check if this is a deleted block (from comparison mode)
+      if ((block as any)._isDeleted) {
+        nodeStyle.opacity = 0.6;
+        nodeStyle.border = '2px dashed #ef4444';
+      }
       
       nodes.push({
         id: nodeId,
@@ -205,8 +218,11 @@ export const calculateLayout = (hierarchy: HierarchyNode): { nodes: Node[] } => 
         },
         parentId,
         draggable: false,
-        extent: parentId ? 'parent' : undefined, // Only constrain if inside a group
         selectable: true,
+        focusable: true,
+        style: nodeStyle,
+        // Remove extent restriction to allow proper interaction
+        extent: undefined,
       });
     });
   };
@@ -247,7 +263,7 @@ export const calculateLayout = (hierarchy: HierarchyNode): { nodes: Node[] } => 
     const nodeId = generateId();
     const size = calculateGroupSize(node);
 
-    // Create group node
+    // Create group node with proper configuration
     nodes.push({
       id: nodeId,
       type: 'group',
@@ -259,9 +275,13 @@ export const calculateLayout = (hierarchy: HierarchyNode): { nodes: Node[] } => 
         backgroundColor: 'rgba(147, 51, 234, 0.05)', // Light purple
         border: '2px dashed rgb(147, 51, 234)', // Purple dashed border
         borderRadius: '8px',
+        pointerEvents: 'all', // Ensure group can receive events
+        zIndex: 1, // Groups have lower z-index than their children
       },
       parentId,
       draggable: false,
+      selectable: false, // Groups themselves aren't selectable
+      focusable: false,
     });
 
     let contentY = LAYOUT.PADDING + LAYOUT.TITLE_HEIGHT;
@@ -293,4 +313,59 @@ export const calculateLayout = (hierarchy: HierarchyNode): { nodes: Node[] } => 
   processNode(hierarchy);
 
   return { nodes };
+};
+
+// Helper function to merge blocks from different sources for comparison
+export const mergeBlocksForComparison = (
+  compareBlocks: CodeBlock[],
+  deletedBlocks: CodeBlock[]
+): CodeBlock[] => {
+  const allBlocks = [...compareBlocks];
+  
+  // Add deleted blocks with special marking
+  deletedBlocks.forEach(deletedBlock => {
+    // Check if this block already exists in compareBlocks
+    const existsInCompare = compareBlocks.some(block => 
+      (block.address || `${block._metadata.block_type}.${block.name}`) === 
+      (deletedBlock.address || `${deletedBlock._metadata.block_type}.${deletedBlock.name}`)
+    );
+    
+    if (!existsInCompare) {
+      // Mark as deleted and add to the list
+      allBlocks.push({
+        ...deletedBlock,
+        _isDeleted: true
+      } as any);
+    }
+  });
+  
+  return allBlocks;
+};
+
+// Helper function to sort blocks for consistent layout
+export const sortBlocksForLayout = (blocks: CodeBlock[]): CodeBlock[] => {
+  return blocks.sort((a, b) => {
+    // Sort by block type first
+    const typeOrder = ['provider', 'terraform', 'variable', 'locals', 'data', 'resource', 'module', 'output'];
+    const aTypeIndex = typeOrder.indexOf(a._metadata.block_type);
+    const bTypeIndex = typeOrder.indexOf(b._metadata.block_type);
+    
+    if (aTypeIndex !== bTypeIndex) {
+      return aTypeIndex - bTypeIndex;
+    }
+    
+    // Then sort by name
+    const aName = a.name || '';
+    const bName = b.name || '';
+    return aName.localeCompare(bName);
+  });
+};
+
+// Export enhanced hierarchy utilities
+export default {
+  buildHierarchy,
+  calculateLayout,
+  mergeBlocksForComparison,
+  sortBlocksForLayout,
+  LAYOUT
 };

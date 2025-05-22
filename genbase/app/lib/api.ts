@@ -87,7 +87,6 @@ export interface CodeBlock {
   };
 }
 
-// New interface for dependencies
 export interface Dependency {
   from: string;
   to: string;
@@ -111,31 +110,45 @@ export interface ParsedCode {
     provider?: CodeBlock[];
     terraform?: CodeBlock[];
   };
-  dependencies: Dependency[]; // New field for dependencies
+  dependencies: Dependency[];
   parse_errors?: any[];
 }
 
-// Chat interfaces
+// --- Updated Chat Interfaces ---
 export interface ChatSession {
-  id: string;
-  title?: string;
-  branch: string;
-  created_at: string;
-  last_activity?: string;
-  message_count: number;
+  session_id: string;         // e.g., "user/default/16"
+  session_number: number;     // e.g., 16
+  title: string;              // e.g., "Test Session" or "Chat Session 16"
+  project_id: string;         // e.g., "default"
+  message_count: number;      // Present in both create and list responses
+
+  // Fields that might differ between create and list contexts
+  created_at?: string;         // Present in create response, not in list example
+  infrastructure_path?: string | null; // Present in create and list (can be null)
+  worktree_path?: string;      // Present in create response, not in list example
+
+  // Fields mainly from list response context
+  last_message_at?: string;    // Present in list response
+  last_commit_date?: string;   // Present in list response
+  last_commit_message?: string;// Present in list response
+  worktree_exists?: boolean;   // Present in list response
 }
 
 export interface ChatMessage {
-  id: string;
+  id: number; // API returns number for message ID e.g. "id": 3
   role: "user" | "assistant" | "system" | "tool";
   content: string;
-  timestamp: string;
+  created_at: string; // API returns "created_at", not "timestamp"
+  litellm_format?: any; // API includes this in the send message response
+
+  // Optional fields that might be used by tools or for more detailed messages
   tool_calls?: any[];
+  name?: string; // e.g., "read_file" 
   tool_call_id?: string;
   reasoning_content?: string;
 }
+// --- End of Updated Chat Interfaces ---
 
-// API client with project management functions
 const apiClient = {
   // Project functions
   async listProjects(): Promise<Project[]> {
@@ -173,7 +186,7 @@ const apiClient = {
     return response.data.data;
   },
 
-  // Workspace functions - updated to exclude group path
+  // Workspace functions
   async listWorkspaces(projectId: string): Promise<Workspace[]> {
     const response = await axios.get(`${API_URL}/projects/${projectId}/workspaces`);
     return response.data.data;
@@ -193,7 +206,7 @@ const apiClient = {
     return response.data.data;
   },
 
-  // Variable functions - updated to exclude group path
+  // Variable functions
   async listVariables(projectId: string, workspace?: string): Promise<Variable[]> {
     const params = workspace ? { workspace } : {};
     const response = await axios.get(`${API_URL}/projects/${projectId}/variables`, { params });
@@ -226,35 +239,35 @@ const apiClient = {
     return response.data.success;
   },
 
-  // OpenTofu operations - updated to exclude group path
+  // OpenTofu operations
   async getState(projectId: string, workspace?: string, refresh: boolean = false): Promise<StateResult> {
     const params = { 
       workspace: workspace || 'default',
       refresh
     };
     const response = await axios.get(`${API_URL}/projects/${projectId}/operations/state`, { params });
-    return response.data.data;
+    return response.data.data; // Assuming API returns StateResult within response.data.data
   },
 
   async planInfrastructure(projectId: string, workspace?: string): Promise<PlanResult> {
     const response = await axios.post(`${API_URL}/projects/${projectId}/operations/plan`, {
       workspace: workspace || 'default'
     });
-    return response.data.data;
+    return response.data.data; // Assuming API returns PlanResult within response.data.data
   },
 
   async applyInfrastructure(projectId: string, workspace?: string): Promise<ApplyResult> {
     const response = await axios.post(`${API_URL}/projects/${projectId}/operations/apply`, {
       workspace: workspace || 'default'
     });
-    return response.data.data;
+    return response.data.data; // Assuming API returns ApplyResult within response.data.data
   },
 
   async destroyInfrastructure(projectId: string, workspace?: string): Promise<DestroyResult> {
     const response = await axios.post(`${API_URL}/projects/${projectId}/operations/destroy`, {
       workspace: workspace || 'default'
     });
-    return response.data.data;
+    return response.data.data; // Assuming API returns DestroyResult within response.data.data
   },
 
   async parseProjectCode(projectId: string, branch: string = "main"): Promise<ParsedCode> {
@@ -267,41 +280,86 @@ const apiClient = {
     return response.data.data;
   },
 
-  // Remove the compare configurations function since we removed that endpoint
-  // async compareConfigurations() {} // REMOVED
-
-  // Chat functions
+  // --- Updated Chat Functions ---
   async createChatSession(projectId: string, title?: string): Promise<ChatSession> {
-    const response = await axios.post(`${API_URL}/projects/${projectId}/chat/sessions`, {
-      title
-    });
+    const payload: { title?: string } = {};
+    if (title) {
+      payload.title = title;
+    }
+    // The API response for creating a session includes fields like session_id, session_number, title, project_id, created_at, message_count, infrastructure_path, worktree_path
+    // This structure matches the updated ChatSession interface.
+    const response = await axios.post<{ success: boolean; message: string; data: ChatSession }>(
+      `${API_URL}/projects/${projectId}/chat/sessions`,
+      payload
+    );
     return response.data.data;
   },
 
   async listChatSessions(projectId: string): Promise<ChatSession[]> {
-    const response = await axios.get(`${API_URL}/projects/${projectId}/chat/sessions`);
+    // The API response for listing sessions includes an array of session objects.
+    // Each object has fields like session_id, session_number, title, project_id, message_count, last_message_at, etc.
+    // This structure matches the updated ChatSession interface (with some fields being optional).
+    const response = await axios.get<{ success: boolean; message: string; data: ChatSession[] }>(
+      `${API_URL}/projects/${projectId}/chat/sessions`
+    );
     return response.data.data;
   },
 
   async deleteChatSession(projectId: string, sessionId: string): Promise<boolean> {
-    const response = await axios.delete(`${API_URL}/projects/${projectId}/chat/sessions?session_id=${sessionId}`);
-    return response.data.success;
+    // The API uses session_id as a query parameter.
+    const response = await axios.delete<{ success: boolean; message: string; data: { deleted_messages: number } }>(
+      `${API_URL}/projects/${projectId}/chat/sessions?session_id=${sessionId}`
+    );
+    return response.data.success; // Returns true if the operation was successful.
   },
 
   async sendChatMessage(projectId: string, sessionId: string, content: string): Promise<ChatMessage> {
-    const response = await axios.post(`${API_URL}/projects/${projectId}/chat/messages`, {
-      session_id: sessionId,
-      content
-    });
+    // The API expects session_id and content in the request body.
+    // The API response for sending a message includes id, role, content, created_at, litellm_format.
+    // This structure matches the updated ChatMessage interface.
+    const response = await axios.post<{ success: boolean; message: string; data: ChatMessage }>(
+      `${API_URL}/projects/${projectId}/chat/messages`,
+      {
+        session_id: sessionId, // Ensure this matches the API's expected field name
+        content
+      }
+    );
     return response.data.data;
   },
 
   async getChatMessages(projectId: string, sessionId: string): Promise<ChatMessage[]> {
-    const response = await axios.get(
+    // The API uses session_id as a query parameter.
+    // Expects an array of ChatMessage objects.
+    const response = await axios.get<{ success: boolean; message: string; data: ChatMessage[] }>(
       `${API_URL}/projects/${projectId}/chat/messages?session_id=${sessionId}`
     );
     return response.data.data;
   }
+
+,
+  // --- Agent API Functions ---
+  async sendAgentMessage(
+    projectId: string, 
+    sessionId: string, 
+    content: string, 
+    model?: string,
+    temperature?: number
+  ): Promise<ChatMessage> {
+    // The agent API handles both storing the user message and processing it
+    const response = await axios.post<{ success: boolean; message: string; data: ChatMessage }>(
+      `${API_URL}/projects/${projectId}/agent/messages`,
+      {
+        session_id: sessionId,
+        content,
+        model,
+        temperature
+      }
+    );
+    return response.data.data;
+  }
+
+
+  
 };
 
 export default apiClient;

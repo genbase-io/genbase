@@ -1,4 +1,4 @@
-// store.ts - Add InfraChart state
+// store.ts - Updated for Plate UI
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { Project, ChatSession } from './api';
@@ -40,6 +40,11 @@ interface AppState {
   showChatSessionList: boolean;
   setShowChatSessionList: (show: boolean) => void;
   
+  // Chat editor content per session (now stores Plate value as JSON string)
+  chatEditorContent: Record<string, string>;
+  setChatEditorContent: (sessionId: string, content: string) => void;
+  clearChatEditorContent: (sessionId: string) => void;
+  
   // InfraChart state for selected node
   selectedNodeData: CodeNodeData | null;
   setSelectedNodeData: (data: CodeNodeData | null) => void;
@@ -68,6 +73,7 @@ export const useAppStore = create<AppState>()(
       currentChatSessionId: null,
       chatSessions: [],
       showChatSessionList: false,
+      chatEditorContent: {},
       
       // InfraChart state
       selectedNodeData: null,
@@ -85,6 +91,15 @@ export const useAppStore = create<AppState>()(
       setCurrentChatSessionId: (sessionId) => set({ currentChatSessionId: sessionId }),
       setChatSessions: (sessions) => set({ chatSessions: sessions }),
       setShowChatSessionList: (show) => set({ showChatSessionList: show }),
+      setChatEditorContent: (sessionId, content) => 
+        set((state) => ({
+          chatEditorContent: { ...state.chatEditorContent, [sessionId]: content }
+        })),
+      clearChatEditorContent: (sessionId) =>
+        set((state) => {
+          const { [sessionId]: _, ...rest } = state.chatEditorContent;
+          return { chatEditorContent: rest };
+        }),
       
       // InfraChart actions
       setSelectedNodeData: (data) => set({ selectedNodeData: data }),
@@ -100,6 +115,7 @@ export const useAppStore = create<AppState>()(
         currentChatSessionId: null,
         chatSessions: [],
         showChatSessionList: false,
+        chatEditorContent: {},
         selectedNodeData: null,
         showInfoPanel: false,
         infoPanelPosition: { x: 0, y: 0 },
@@ -112,6 +128,7 @@ export const useAppStore = create<AppState>()(
         currentWorkspace: state.currentWorkspace,
         currentBranch: state.currentBranch,
         currentChatSessionId: state.currentChatSessionId,
+        chatEditorContent: state.chatEditorContent,
       }),
     }
   )
@@ -189,5 +206,68 @@ export const useChat = () => {
     setChatSessions,
     showChatSessionList,
     setShowChatSessionList,
+  };
+};
+
+// Simple hook for Plate UI content management
+export const useChatEditorContent = (sessionId: string | null) => {
+  const chatEditorContent = useAppStore(state => state.chatEditorContent);
+  const setChatEditorContent = useAppStore(state => state.setChatEditorContent);
+  const clearChatEditorContent = useAppStore(state => state.clearChatEditorContent);
+  
+  if (!sessionId) return { 
+    content: '', 
+    setContent: () => {}, 
+    clearContent: () => {}, 
+    appendContent: () => {} 
+  };
+  
+  // Helper to extract text from Plate value
+  const extractText = (value: any[]): string => {
+    return value.map(node => {
+      if (node.text !== undefined) {
+        return node.text;
+      }
+      if (node.children) {
+        return extractText(node.children);
+      }
+      return '';
+    }).join('');
+  };
+  
+  return {
+    content: chatEditorContent[sessionId] || '',
+    setContent: (content: string) => setChatEditorContent(sessionId, content),
+    clearContent: () => clearChatEditorContent(sessionId),
+    
+    // Simple appendContent - just appends text to current paragraph
+    appendContent: (newText: string) => {
+      console.log('Appending content:', newText);
+      const currentContent = chatEditorContent[sessionId] || '';
+      
+      let updatedValue;
+      
+      if (currentContent && currentContent.trim() !== '' && currentContent !== '[]') {
+        try {
+          const currentValue = JSON.parse(currentContent);
+          const existingText = extractText(currentValue);
+          
+          // Simple logic: just append to existing text with a space
+          const combinedText = existingText.trim() 
+            ? `${existingText} ${newText}` 
+            : newText;
+            
+          updatedValue = [{ type: 'p', children: [{ text: combinedText }] }];
+        } catch {
+          // If parsing fails, create new content
+          updatedValue = [{ type: 'p', children: [{ text: newText }] }];
+        }
+      } else {
+        // Empty content, just create new paragraph
+        updatedValue = [{ type: 'p', children: [{ text: newText }] }];
+      }
+      
+      setChatEditorContent(sessionId, JSON.stringify(updatedValue));
+    }
   };
 };

@@ -6,7 +6,7 @@ import { toast } from "sonner";
 
 import { GroupDetail } from "@/components/main-view/group-detail";
 import { VariableSettings } from "@/components/variable-settings";
-import { ChatPanel } from "@/components/chat-panel";
+import {ChatPanel} from "@/components/chat/chat-panel";
 
 import apiClient from "@/lib/api";
 import { useCurrentProject } from "@/lib/store";
@@ -58,7 +58,7 @@ export default function DashboardPage() {
         </div>
         
         {/* Right Sidebar - Fixed height with internal scrolling */}
-        <div className="w-80 border-l h-full flex flex-col overflow-hidden">
+        <div className="w-[32rem] border-l h-full flex flex-col overflow-hidden">
           <Tabs 
             value={rightSidebarTab} 
             onValueChange={setRightSidebarTab}
@@ -75,11 +75,11 @@ export default function DashboardPage() {
               </TabsTrigger>
             </TabsList>
             
-            <TabsContent value="chat" className="flex-1 overflow-hidden pt-4">
+            <TabsContent value="chat" className="flex-1 overflow-hidden ">
               <ChatPanel />
             </TabsContent>
             
-            <TabsContent value="settings" className="flex-1 overflow-hidden pt-4">
+            <TabsContent value="settings" className="flex-1 overflow-hidden ">
               <VariableSettings />
             </TabsContent>
           </Tabs>
