@@ -4,12 +4,31 @@ Native Git service with worktree support for concurrent operations
 import os
 import shutil
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, TypedDict
 from git import Repo, InvalidGitRepositoryError, GitCommandError
+from pydantic import BaseModel, Field
 
 from ..logger import logger
 from .project_service import ProjectService
 
+
+class CommitResult(BaseModel):
+    """Result of a Git commit operation"""
+    success: bool = Field(description="Whether the commit operation succeeded")
+    message: str = Field(description="Human-readable message about the operation")
+    commit_id: Optional[str] = Field(None, description="Full commit hash if successful")
+    commit_message: Optional[str] = Field(None, description="The message used for the commit")
+    branch: Optional[str] = Field(None, description="Branch where the commit was made")
+    commit_date: Optional[str] = Field(None, description="ISO formatted date of the commit")
+    error: Optional[str] = Field(None, description="Error message if operation failed")
+    no_changes: bool = Field(False, description="Whether there were no changes to commit")
+
+    class Config:
+        # Allow extra fields that aren't in our model
+        extra = "allow"
+
+
+        
 
 class GitService:
     """
@@ -597,7 +616,216 @@ class GitService:
                 "success": False,
                 "error": str(e)
             }
+
+
+
+
+
+
+
+    @staticmethod
+    def commit_changes(project_id: str, branch: str, message: str, files: Optional[List[str]]=None) -> CommitResult: 
+        """
+        Commit changes to a branch in the repository
+        
+        Args:
+            project_id: The project identifier
+            branch: The branch name
+            message: The commit message
+            files: Optional list of specific files to commit (relative to infrastructure root)
+                If not provided, all changes will be committed
+            
+        Returns:
+            CommitResult with commit information
+        """
+        try:
+            # Get repository
+            repo = GitService.get_repository(project_id)
+            if not repo:
+                return CommitResult(
+                    success=False,
+                    error=f"Project {project_id} is not a Git repository",
+                    message="Repository not found"
+                )  # type: ignore
+            
+            # For non-main branch, we need to use the worktree
+            if branch != GitService.MAIN_BRANCH:
+                worktree_path = GitService.get_worktree_root_path(project_id, branch)
+                if not worktree_path:
+                    return CommitResult(
+                        success=False,
+                        error=f"Worktree not found for branch: {branch}",
+                        message="Worktree not found"
+                    ) # type: ignore
+                
+                # Create a repo object for the worktree
+                worktree_repo = Repo(worktree_path)
+            else:
+                # Use the main repo
+                worktree_repo = repo
+            
+            # Determine what to add
+            if files is not None and len(files) > 0:
+                # Add specific files (convert to absolute paths)
+                infra_path = GitService.get_infrastructure_path(project_id, branch)
+                absolute_files = [str(infra_path / file) for file in files]
+                
+                # Add each file individually
+                for file in absolute_files:
+                    worktree_repo.git.add(file)
+            else:
+                # Add all changes
+                worktree_repo.git.add(A=True)
+            
+            # Check if there are changes to commit
+            if not worktree_repo.is_dirty() and not worktree_repo.untracked_files:
+                return CommitResult(
+                    success=True,
+                    message="No changes to commit",
+                    commit_id=None,
+                    branch=branch,
+                    no_changes=True
+                )  # type: ignore
+            
+            # Commit the changes
+            commit = worktree_repo.index.commit(message)
+            
+            logger.info(f"Committed changes to branch {branch} with message: {message}")
+            
+            # Create and return the result
+            return CommitResult(
+                success=True,
+                message="Changes committed successfully",
+                commit_id=commit.hexsha,
+                commit_message=message,
+                branch=branch,
+                no_changes=False,
+                commit_date=commit.committed_datetime.isoformat()
+            )  # type: ignore
+            
+        except GitCommandError as e:
+            logger.error(f"Git error during commit: {str(e)}")
+            return CommitResult(
+                success=False,
+                error=f"Git command failed: {str(e)}",
+                message="Git command failed"
+            )  # type: ignore
+        except Exception as e:
+            logger.error(f"Error committing changes: {str(e)}")
+            return CommitResult(
+                success=False,
+                error=str(e),
+                message="Commit operation failed"
+            )  # type: ignore
     
+
+
+
+
+    @staticmethod
+    def check_branch_sync_status(project_id: str, branch_name: str, target_branch: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Check if a branch is in sync with another branch (defaults to main)
+        
+        Returns sync status including ahead/behind counts and whether branches have diverged.
+        """
+        if target_branch is None:
+            target_branch = GitService.MAIN_BRANCH
+            
+        try:
+            repo = GitService.get_repository(project_id)
+            if not repo:
+                return {"success": False, "error": f"Project {project_id} is not a Git repository"}
+            
+            # Verify branches exist
+            branch_names = [branch.name for branch in repo.branches]
+            if branch_name not in branch_names:
+                return {"success": False, "error": f"Branch '{branch_name}' does not exist"}
+            if target_branch not in branch_names:
+                return {"success": False, "error": f"Target branch '{target_branch}' does not exist"}
+            
+            # Count commits ahead and behind
+            ahead_count = len(list(repo.iter_commits(f"{target_branch}..{branch_name}")))
+            behind_count = len(list(repo.iter_commits(f"{branch_name}..{target_branch}")))
+            
+            # Determine sync status
+            is_in_sync = behind_count == 0
+            diverged = ahead_count > 0 and behind_count > 0
+            
+            # Status description
+            if ahead_count == 0 and behind_count == 0:
+                status = f"'{branch_name}' is up to date with '{target_branch}'"
+            elif ahead_count > 0 and behind_count == 0:
+                status = f"'{branch_name}' is ahead by {ahead_count} commit(s)"
+            elif ahead_count == 0 and behind_count > 0:
+                status = f"'{branch_name}' is behind by {behind_count} commit(s)"
+            else:
+                status = f"'{branch_name}' has diverged (ahead: {ahead_count}, behind: {behind_count})"
+            
+            return {
+                "success": True,
+                "is_in_sync": is_in_sync,
+                "ahead_count": ahead_count,
+                "behind_count": behind_count,
+                "diverged": diverged,
+                "status_description": status
+            }
+            
+        except Exception as e:
+            logger.error(f"Error checking branch sync status: {str(e)}")
+            return {"success": False, "error": str(e)}
+            
+    @staticmethod 
+    def sync_branch_with_target(project_id: str, branch_name: str, target_branch: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Sync a branch with target branch using merge strategy
+        """
+        if target_branch is None:
+            target_branch = GitService.MAIN_BRANCH
+            
+        try:
+            # Check current sync status
+            sync_status = GitService.check_branch_sync_status(project_id, branch_name, target_branch)
+            if not sync_status.get("success", False):
+                return sync_status
+            
+            # Return early if already in sync
+            if sync_status.get("is_in_sync", False) and sync_status.get("behind_count", 0) == 0:
+                return {
+                    "success": True,
+                    "message": f"Branch '{branch_name}' is already in sync",
+                    "action_taken": "none"
+                }
+            
+            # Get appropriate repo object (worktree for non-main branches)
+            if branch_name != GitService.MAIN_BRANCH:
+                worktree_path = GitService.get_worktree_root_path(project_id, branch_name)
+                if not worktree_path:
+                    return {"success": False, "error": f"Worktree not found for branch: {branch_name}"}
+                branch_repo = Repo(worktree_path)
+            else:
+                branch_repo = GitService.get_repository(project_id)
+                
+            if not branch_repo:
+                return {"success": False, "error": f"Could not access repository for branch: {branch_name}"}
+            
+            # Merge target branch into source branch
+            branch_repo.git.merge(target_branch)
+            
+            logger.info(f"Synced branch '{branch_name}' with '{target_branch}'")
+            
+            return {
+                "success": True,
+                "message": f"Successfully merged '{target_branch}' into '{branch_name}'",
+                "action_taken": "merge"
+            }
+            
+        except Exception as e:
+            logger.error(f"Error syncing branch: {str(e)}")
+            return {"success": False, "error": str(e)}
+
+
+            
     # Legacy method aliases for backward compatibility
     @staticmethod
     def create_branch(project_id: str, branch_name: str) -> Dict[str, Any]:
@@ -608,3 +836,5 @@ class GitService:
     def delete_branch(project_id: str, branch_name: str) -> Dict[str, Any]:
         """Legacy method - use delete_branch_with_worktree instead"""
         return GitService.delete_branch_with_worktree(project_id, branch_name)
+
+

@@ -1,4 +1,4 @@
-// dependency-utils.tsx - Enhanced for 4 handles and comparison mode
+// dependency-utils.tsx - Fixed to properly show/hide edges based on dependencies toggle
 import { Node, Edge, MarkerType } from 'reactflow';
 import { Dependency } from '@/lib/api';
 import { BranchComparison, getDependencyChangeType, getDependencyChangeColor } from './comparison-utils';
@@ -242,22 +242,63 @@ export const createEdgesFromDependencies = (
   showDependencies: boolean = true,
   comparison?: BranchComparison
 ): Edge[] => {
-  if (!showDependencies) return [];
+  console.log('createEdgesFromDependencies called:', {
+    dependenciesCount: dependencies?.length || 0,
+    nodesCount: allNodes?.length || 0,
+    showDependencies,
+    hasComparison: !!comparison
+  });
+
+  // Early return if dependencies are disabled
+  if (!showDependencies) {
+    console.log('Dependencies disabled, returning empty edges array');
+    return [];
+  }
   
   // Defensive checks
-  if (!Array.isArray(dependencies)) return [];
-  if (!Array.isArray(allNodes)) return [];
+  if (!Array.isArray(dependencies)) {
+    console.log('Dependencies is not an array:', dependencies);
+    return [];
+  }
+  if (!Array.isArray(allNodes)) {
+    console.log('AllNodes is not an array:', allNodes);
+    return [];
+  }
+  
+  if (dependencies.length === 0) {
+    console.log('No dependencies found');
+    return [];
+  }
   
   const edges: Edge[] = [];
   const nodeMap = new Map(allNodes.filter(node => node && node.id).map(node => [node.id, node]));
   
+  console.log('Processing dependencies:', {
+    dependenciesCount: dependencies.length,
+    nodeMapSize: nodeMap.size,
+    sampleDependency: dependencies[0]
+  });
+  
   // Process dependencies and create edges
   dependencies.forEach((dep, index) => {
     // Defensive checks for dependency object
-    if (!dep || !dep.from || !dep.to) return;
+    if (!dep || !dep.from || !dep.to) {
+      console.log('Invalid dependency at index', index, dep);
+      return;
+    }
     
     const sourceNode = nodeMap.get(dep.from);
     const targetNode = nodeMap.get(dep.to);
+    
+    if (!sourceNode) {
+      console.log('Source node not found:', dep.from);
+      return;
+    }
+    
+    if (!targetNode) {
+      console.log('Target node not found:', dep.to);
+      return;
+    }
     
     // Only create edge if both nodes exist in our layout
     if (sourceNode && targetNode) {
@@ -339,9 +380,11 @@ export const createEdgesFromDependencies = (
       };
       
       edges.push(edge);
+      console.log('Created edge:', edge.id, 'from', dep.from, 'to', dep.to);
     }
   });
   
+  console.log('Final edges created:', edges.length);
   return edges;
 };
 

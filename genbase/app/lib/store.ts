@@ -245,29 +245,31 @@ export const useChatEditorContent = (sessionId: string | null) => {
       console.log('Appending content:', newText);
       const currentContent = chatEditorContent[sessionId] || '';
       
-      let updatedValue;
+      let updatedContent: string;
       
-      if (currentContent && currentContent.trim() !== '' && currentContent !== '[]') {
-        try {
-          const currentValue = JSON.parse(currentContent);
-          const existingText = extractText(currentValue);
-          
-          // Simple logic: just append to existing text with a space
-          const combinedText = existingText.trim() 
-            ? `${existingText} ${newText}` 
-            : newText;
-            
-          updatedValue = [{ type: 'p', children: [{ text: combinedText }] }];
-        } catch {
-          // If parsing fails, create new content
-          updatedValue = [{ type: 'p', children: [{ text: newText }] }];
+      if (currentContent.trim()) {
+        // If there's existing content, check if we need to add space/newline
+        const trimmedCurrent = currentContent.trim();
+        const trimmedNew = newText.trim();
+        
+        // If current content ends with a space or newline, just append
+        if (currentContent.endsWith(' ') || currentContent.endsWith('\n')) {
+          updatedContent = currentContent + trimmedNew;
+        }
+        // If new content starts with @ (mention), add a space before it
+        else if (trimmedNew.startsWith('@')) {
+          updatedContent = trimmedCurrent + ' ' + trimmedNew;
+        }
+        // For other content, add a space
+        else {
+          updatedContent = trimmedCurrent + ' ' + trimmedNew;
         }
       } else {
-        // Empty content, just create new paragraph
-        updatedValue = [{ type: 'p', children: [{ text: newText }] }];
+        // No existing content, just use the new text
+        updatedContent = newText;
       }
       
-      setChatEditorContent(sessionId, JSON.stringify(updatedValue));
+      setChatEditorContent(sessionId, updatedContent);
     }
   };
 };

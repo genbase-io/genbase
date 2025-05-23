@@ -3,7 +3,7 @@ Application configuration
 """
 import os
 from typing import List
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -28,7 +28,10 @@ class Config(BaseModel):
 
     CORS_ORIGINS: List[str] = [origin.strip() for origin in os.getenv("CORS_ORIGINS", "http://localhost:3000,https://console.genbase.io").split(",")]
 
+    DEFAULT_MODEL: str = os.getenv("DEFAULT_MODEL", "gpt-4o")
 
+
+    MAIN_BRANCH: str = "main"
 
 # Create settings instance
 config = Config()

@@ -18,7 +18,7 @@ from .database import get_db
 from .config import config
 from .logger import logger
 from src.routers import projects, groups, operations
-
+from src.routers import agents  # Import the new agent router
 # Initialize FastAPI app
 app = FastAPI(
     title=config.APP_NAME,
@@ -52,6 +52,8 @@ app.include_router(variables.router)
 app.include_router(workspaces.router)
 app.include_router(code.router)
 app.include_router(chat.router)
+app.include_router(agents.router)  # Register the new agent router
+
 
 
 
@@ -86,6 +88,7 @@ async def startup_event():
     logger.info(f"Starting {config.APP_NAME} v{config.APP_VERSION}")
     # Run database migrations
     run_migrations()
+    
     logger.info("Application startup complete")
 
 

@@ -497,20 +497,8 @@ function InfraChartContent() {
           {/* Top control panel */}
           <Panel position="top-left" className="bg-background/95 backdrop-blur-sm border rounded-md shadow-sm p-3 z-10">
             <div className="flex items-center space-x-3">
-              {/* Current branch indicator */}
-              {/* <div className="flex items-center space-x-2">
-                <GitBranch className="h-4 w-4 text-muted-foreground" />
-                <Badge variant="outline" className="text-xs">
-                  {getCurrentBranch()}
-                </Badge>
-              </div> */}
+           
               
-              {/* Comparison status */}
-              {/* {branchComparison && (
-                <div className="text-xs text-muted-foreground">
-                  {getComparisonStatus()}
-                </div>
-              )} */}
               
               {/* Search */}
               <div className="relative w-56">

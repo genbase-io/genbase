@@ -332,7 +332,8 @@ class ChatService:
         session_id: str,
         tool_call_id: str,
         name: str,
-        content: str
+        content: str,
+        commit_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Add a tool result message to a chat session
@@ -354,7 +355,8 @@ class ChatService:
                 role="tool",
                 content=content,
                 tool_call_id=tool_call_id,
-                name=name
+                name=name,
+                commit_id=commit_id
             )
             
         except Exception as e:
@@ -374,7 +376,8 @@ class ChatService:
         tool_call_id: Optional[str] = None,
         name: Optional[str] = None,
         reasoning_content: Optional[str] = None,
-        annotations: Optional[List[Dict[str, Any]]] = None
+        annotations: Optional[List[Dict[str, Any]]] = None,
+        commit_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Internal method to add a message to a chat session
@@ -387,22 +390,40 @@ class ChatService:
                 "error": f"Project not found: {project_id}"
             }
         
-        # Verify that the session exists by checking if branch exists
-        chat_branches = GitService.list_chat_branches(project_id)
-        branch_exists = any(branch["branch_name"] == session_id for branch in chat_branches)
-        
-        if not branch_exists:
-            return {
-                "success": False,
-                "error": f"Chat session not found: {session_id}"
-            }
+        # Handle main branch as a special case
+        if session_id == "main":
+            # For main branch, we just check if the main branch exists in the Git repo
+            repo = GitService.get_repository(project_id)
+            if not repo:
+                return {
+                    "success": False,
+                    "error": f"Project {project_id} is not a Git repository"
+                }
+            
+            # Check if main branch exists
+            main_branch_exists = "main" in [branch.name for branch in repo.branches]
+            if not main_branch_exists:
+                return {
+                    "success": False,
+                    "error": f"Main branch not found in project: {project_id}"
+                }
+        else:
+            # For chat branches, verify that the session exists by checking if branch exists
+            chat_branches = GitService.list_chat_branches(project_id)
+            branch_exists = any(branch["branch_name"] == session_id for branch in chat_branches)
+            
+            if not branch_exists:
+                return {
+                    "success": False,
+                    "error": f"Chat session not found: {session_id}"
+                }
         
         # Get database session
         db: Session = next(get_db())
         
         try:
-            # Handle tool call validation
-            if role != "tool":
+            # Handle tool call validation (only for non-main branches to avoid complexity)
+            if role != "tool" and session_id != "main":
                 # Check for pending tool calls that need responses
                 ChatService._handle_pending_tool_calls(db, project_id, session_id)
             
@@ -416,7 +437,8 @@ class ChatService:
                 tool_call_id=tool_call_id,
                 name=name,
                 reasoning_content=reasoning_content,
-                annotations=annotations
+                annotations=annotations,
+                commit_id=commit_id
             )
             
             db.add(message)
@@ -507,12 +529,24 @@ class ChatService:
             if not project:
                 raise ValueError(f"Project not found: {project_id}")
             
-            # Verify that the session exists
-            chat_branches = GitService.list_chat_branches(project_id)
-            branch_exists = any(branch["branch_name"] == session_id for branch in chat_branches)
-            
-            if not branch_exists:
-                raise ValueError(f"Chat session not found: {session_id}")
+            # Handle main branch as a special case
+            if session_id == "main":
+                # For main branch, we just check if the main branch exists in the Git repo
+                repo = GitService.get_repository(project_id)
+                if not repo:
+                    raise ValueError(f"Project {project_id} is not a Git repository")
+                
+                # Check if main branch exists
+                main_branch_exists = "main" in [branch.name for branch in repo.branches]
+                if not main_branch_exists:
+                    raise ValueError(f"Main branch not found in project: {project_id}")
+            else:
+                # For chat branches, verify that the session exists
+                chat_branches = GitService.list_chat_branches(project_id)
+                branch_exists = any(branch["branch_name"] == session_id for branch in chat_branches)
+                
+                if not branch_exists:
+                    raise ValueError(f"Chat session not found: {session_id}")
             
             # Get database session
             db: Session = next(get_db())

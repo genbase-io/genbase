@@ -4,10 +4,11 @@ import { useState, useEffect } from "react";
 import { useChat, useCurrentProject } from "../../lib/store";
 import apiClient, { ChatSession } from "../../lib/api";
 import { Button } from "../ui/button";
-import { Trash2, PlusCircle, ArrowLeft } from "lucide-react";
+import { Trash2, PlusCircle, ArrowLeft, Eye, Star, StarIcon } from "lucide-react";
 import { ScrollArea } from "../ui/scroll-area";
 import { ChatMessages } from "./chat-messages";
 import { ChatInput } from "./chat-input";
+import { Badge } from "../ui/badge";
 
 export function ChatPanel() {
   const { currentProjectId } = useCurrentProject();
@@ -51,7 +52,23 @@ export function ChatPanel() {
     setIsLoading(true);
     try {
       const sessions = await apiClient.listChatSessions(currentProjectId);
-      setChatSessions(sessions);
+      
+      // Add main branch as a special session at the top
+      const mainSession = {
+        session_id: "main",
+        session_number: 0,
+        title: "Main Session",
+        project_id: currentProjectId,
+        message_count: 0,
+        last_message_at: null,
+        infrastructure_path: null,
+        worktree_exists: true,
+        is_main_branch: true
+      };
+      
+      // Put main session first, then regular sessions
+      setChatSessions([mainSession, ...sessions]);
+      
       if (sessions.length === 0) {
         setShowChatSessionList(true);
       }
@@ -87,7 +104,7 @@ export function ChatPanel() {
     try {
       const newSession = await apiClient.createChatSession(
         currentProjectId,
-        `Chat Session ${chatSessions.length + 1}`
+        `Chat Session ${chatSessions.filter(s => s.session_id !== "main").length + 1}`
       );
       setChatSessions([...chatSessions, newSession]);
       setCurrentChatSessionId(newSession.session_id);
@@ -102,6 +119,11 @@ export function ChatPanel() {
   const deleteChatSession = async (sessionIdToDelete: string, event: React.MouseEvent) => {
     event.stopPropagation();
     if (!currentProjectId) return;
+    
+    // Cannot delete main branch session
+    if (sessionIdToDelete === "main") {
+      return;
+    }
     
     try {
       await apiClient.deleteChatSession(currentProjectId, sessionIdToDelete);
@@ -154,6 +176,7 @@ export function ChatPanel() {
     }
   };
 
+  const isMainBranch = currentChatSessionId === "main";
   const activeSessionTitle = chatSessions.find(s => s.session_id === currentChatSessionId)?.title ||
                            (currentChatSessionId ? `Chat ${currentChatSessionId.split('/').pop()}` : "Chat");
 
@@ -187,50 +210,58 @@ export function ChatPanel() {
                <div className="flex flex-col items-center justify-center p-8 text-center text-muted-foreground h-full">
                   <p>Please select a project to start chatting.</p>
                 </div>
-            ) : chatSessions.length === 0 ? (
+            ) : chatSessions.length <= 1 ? (
               <div className="flex flex-col items-center justify-center p-8 text-center text-muted-foreground h-full">
-                <p className="mb-4">No chat sessions found for this project.</p>
+                <p className="mb-4">No development sessions found. Main session is available above.</p>
                 <Button onClick={createChatSession} disabled={isCreatingSession}>
-                  Create your first session
+                  Create your first development session
                 </Button>
               </div>
             ) : (
               <ScrollArea className="h-full">
                 <div className="p-2 space-y-1">
-                  {chatSessions.map((session: ChatSession) => (
-                    <div
-                      key={session.session_id}
-                      onClick={() => {
-                        setCurrentChatSessionId(session.session_id);
-                        setShowChatSessionList(false);
-                      }}
-                      className={`p-3 rounded-md cursor-pointer flex justify-between items-center group hover:bg-accent ${currentChatSessionId === session.session_id ? 'bg-muted' : ''}`}
-                    >
-                      <div className="overflow-hidden flex-grow">
-                        <div className="font-medium truncate">
-                          {session.title || `Chat Session ${session.session_number}`}
-                        </div>
-                        <div className="text-xs text-muted-foreground flex items-center space-x-2">
-                          <span>{session.message_count} messages</span>
-                          {session.last_message_at && (
-                            <>
-                              <span>·</span>
-                              <span>{new Date(session.last_message_at).toLocaleDateString()}</span>
-                            </>
-                          )}
-                        </div>
-                      </div>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 ml-2"
-                        onClick={(e) => deleteChatSession(session.session_id, e)}
-                        aria-label="Delete session"
+                  {chatSessions.map((session: ChatSession) => {
+                    const isMainSession = session.session_id === "main";
+                    
+                    return (
+                      <div
+                        key={session.session_id}
+                        onClick={() => {
+                          setCurrentChatSessionId(session.session_id);
+                          setShowChatSessionList(false);
+                        }}
+                        className={`px-3 py-1   rounded-md cursor-pointer flex justify-between items-center group hover:bg-accent ${currentChatSessionId === session.session_id ? 'bg-muted' : ''}`}
                       >
-                        <Trash2 className="h-4 w-4 text-destructive" />
-                      </Button>
-                    </div>
-                  ))}
+                        <div className="overflow-hidden flex-grow">
+                          <div className="flex items-center gap-2 ">
+                            <div className="font-medium truncate">
+                              {session.title || `Chat Session ${session.session_number}`}
+                            </div>
+                            {isMainSession && (
+                                <Badge className="text-lg rounded-full w-6 h-6 p-0 flex items-center justify-center">
+                                <StarIcon className="w-4 h-4" fill="currentColor" />
+                                </Badge>
+                            )}
+                          </div>
+                            <span className="text-xs text-muted-foreground">{new Date(session.last_message_at).toLocaleDateString()}</span>
+                            
+                      
+                        </div>
+                        
+                        {!isMainSession && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 ml-2"
+                            onClick={(e) => deleteChatSession(session.session_id, e)}
+                            aria-label="Delete session"
+                          >
+                            <Trash2 className="h-4 w-4 text-destructive" />
+                          </Button>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </ScrollArea>
             )}
@@ -252,11 +283,27 @@ export function ChatPanel() {
               >
                 <ArrowLeft className="h-5 w-5" />
               </Button>
-              <h2 className="text-lg font-semibold truncate">
-                {activeSessionTitle}
-              </h2>
+              
+              <div className="flex items-center gap-2">
+                <h2 className="text-lg font-semibold truncate">
+                  {activeSessionTitle}
+                </h2>
+                
+                {isMainBranch && (
+                      <Badge className="text-lg rounded-full w-6 h-6 p-0 flex items-center justify-center">
+                                <StarIcon className="w-4 h-4" fill="currentColor" />
+                                </Badge>
+                )}
+              </div>
             </div>
           </div>
+          
+          {/* Simple info banner for main branch */}
+          {isMainBranch && (
+            <div className="px-4 py-2 bg-blue-50 dark:bg-blue-900/20 border-b text-sm text-blue-700 dark:text-blue-300">
+              Ask questions about your infrastructure, get insights, and explore configurations
+            </div>
+          )}
           
           {isLoading && messages.length === 0 ? (
             <div className="flex items-center justify-center flex-1 p-4">

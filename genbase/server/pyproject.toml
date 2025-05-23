@@ -31,3 +31,20 @@ python_files = "test_*.py"
 [tool.ruff]
 line-length = 88
 target-version = "py312"
+
+
+
+
+[tool.pylance]
+# Ignore specific error codes
+reportAttributeAccessIssue = false
+reportArgumentType = false
+reportGeneralTypeIssues = false
+
+
+
+# ignore pyright
+[tool.pyright]
+reportArgumentType = false
+reportGeneralTypeIssues = false
+reportAttributeAccessIssue = false

@@ -40,6 +40,8 @@ class ChatMessage(Base):
     # Additional LiteLLM fields
     reasoning_content = Column(Text, nullable=True)  # For o1 models
     annotations = Column(JSON, nullable=True)  # Citations, etc.
+
+    commit_id = Column(String, nullable=True)  # Git commit ID for the message
     
     
     def to_litellm_format(self) -> Dict[str, Any]:
@@ -47,7 +49,9 @@ class ChatMessage(Base):
         # Start with required fields
         message = {
             "role": self.role,
-            "content": self.content
+            "content": self.content,
+            "id": self.id,
+            "created_at": self.created_at.isoformat() if self.created_at is not None else None,
         }
         
         # Add optional fields if they exist

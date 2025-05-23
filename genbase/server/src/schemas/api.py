@@ -5,13 +5,18 @@ from enum import Enum
 from pydantic import BaseModel, Field, validator
 from typing import List, Dict, Any, Optional
 
-
 # Base response model
 class ResponseBase(BaseModel):
     """Base response model"""
     success: bool = True
     message: Optional[str] = None
 
+
+class GenericResponse(BaseModel):
+    """Generic response model for API endpoints"""
+    success: bool
+    message: str
+    data: Optional[Dict[str, Any]] = None
 
 # Error response model
 class ErrorResponse(ResponseBase):
