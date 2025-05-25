@@ -1,6 +1,7 @@
 """
 Service for executing TF CLI commands
 """
+import asyncio
 import json
 import subprocess
 import os
@@ -18,34 +19,51 @@ class TofuService:
     Service for executing TF CLI commands
     
     All Terraform commands are executed at the project root level.
+    Uses TF_WORKSPACE environment variable to specify workspace instead of workspace selection.
     """
     
     @staticmethod
-    def _run_command(cmd: list, project_id: str) -> Tuple[int, str, str]:
-        """Run a command at the project root and return exit code, stdout, and stderr"""
+    async def _run_command(cmd: list, project_id: str, workspace: str) -> Tuple[int, str, str]:
+        """Run a command at the project root and return exit code, stdout, and stderr - ASYNC"""
         # Always run commands at the project infrastructure root
         infra_path = ProjectService.get_infrastructure_path(project_id)
         
-        logger.debug(f"Running command: {' '.join(cmd)} in {infra_path}")
+        logger.debug(f"Running command: {' '.join(cmd)} in {infra_path} with workspace: {workspace}")
+
+        # Get base environment variables
+        env = VariableService.get_env_for_subprocess(project_id, workspace).copy()
         
-        process = subprocess.Popen(
-            cmd,
+        # Set TF_WORKSPACE if workspace is specified
+        if workspace:
+            env['TF_WORKSPACE'] = workspace
+            logger.debug(f"Set TF_WORKSPACE={workspace}")
+
+        # Use asyncio.create_subprocess_exec for non-blocking process execution
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
             cwd=str(infra_path),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=env
         )
         
-        stdout, stderr = process.communicate()
+        # Non-blocking wait for process completion
+        stdout_bytes, stderr_bytes = await process.communicate()
+        
+        # Decode bytes to strings
+        stdout = stdout_bytes.decode('utf-8') if stdout_bytes else ""
+        stderr = stderr_bytes.decode('utf-8') if stderr_bytes else ""
+        
         exit_code = process.returncode
         
         if exit_code != 0:
             logger.warning(f"Command failed with exit code {exit_code}: {stderr}")
         
-        return exit_code, stdout, stderr
+        return exit_code or 0, stdout, stderr
+
     
     @staticmethod
-    def run_plan(project_id: str, workspace: Optional[str] = None) -> Dict[str, Any]:
+    async def run_plan(project_id: str, workspace: Optional[str] = None) -> Dict[str, Any]:
         """Run tf plan at the project root"""
         # Default to default workspace if not specified
         if workspace is None:
@@ -62,12 +80,12 @@ class TofuService:
         if not tf_files:
             logger.warning(f"No TF files found in project root for {project_id}")
         
-        # Initialize if needed
+        # Initialize if needed (without workspace-specific initialization)
         init_needed = not (infra_path / ".terraform").exists()
         if init_needed:
             logger.info(f"Running init in project {project_id}")
             init_cmd = ["tofu", "init"]
-            exit_code, stdout, stderr = TofuService._run_command(init_cmd, project_id)
+            exit_code, stdout, stderr = await TofuService._run_command(init_cmd, project_id,workspace)
             if exit_code != 0:
                 return {
                     "success": False,
@@ -75,25 +93,16 @@ class TofuService:
                     "init_output": stdout
                 }
         
-        # Switch to the requested workspace if needed
-        workspace_result = WorkspaceService.select_workspace(project_id, workspace)
-        if not workspace_result.get("success", False):
-            return {
-                "success": False,
-                "error": f"Failed to select workspace: {workspace}",
-                "details": workspace_result.get("error", "")
-            }
-        
         # Get variable files for the command (now centralized)
         var_file_args = VariableService.get_var_file_paths_for_command(project_id, workspace)
         
-        # Run tf plan with JSON output
+        # Run tf plan with JSON output - TF_WORKSPACE will be set in environment
         plan_file = infra_path / f"{workspace}_plan.tfplan"
         json_file = infra_path / f"{workspace}_plan.json"
         
         # Create plan file with workspace-specific variables
         plan_cmd = ["tofu", "plan", f"-out={plan_file.name}"] + var_file_args
-        exit_code, plan_stdout, plan_stderr = TofuService._run_command(plan_cmd, project_id)
+        exit_code, plan_stdout, plan_stderr = await TofuService._run_command(plan_cmd, project_id, workspace)
         
         if exit_code != 0:
             return {
@@ -104,7 +113,7 @@ class TofuService:
         
         # Convert plan to JSON
         json_cmd = ["tofu", "show", "-json", plan_file.name]
-        exit_code, json_stdout, json_stderr = TofuService._run_command(json_cmd, project_id)
+        exit_code, json_stdout, json_stderr = await TofuService._run_command(json_cmd, project_id, workspace)
         
         if exit_code != 0:
             return {
@@ -137,6 +146,7 @@ class TofuService:
                 "raw_output": json_stdout
             }
     
+
     @staticmethod
     def _extract_plan_summary(plan_data: Dict[str, Any]) -> Dict[str, Any]:
         """Extract summary information from plan data"""
@@ -160,7 +170,7 @@ class TofuService:
         return summary
     
     @staticmethod
-    def run_apply(project_id: str, workspace: Optional[str] = None) -> Dict[str, Any]:
+    async def run_apply(project_id: str, workspace: Optional[str] = None) -> Dict[str, Any]:
         """Apply the latest plan at the project root"""
         # Default to default workspace if not specified
         if workspace is None:
@@ -172,15 +182,6 @@ class TofuService:
         if not infra_path.exists() or not infra_path.is_dir():
             raise ValueError(f"Infrastructure path does not exist for project: {project_id}")
         
-        # Switch to the requested workspace if needed
-        workspace_result = WorkspaceService.select_workspace(project_id, workspace)
-        if not workspace_result.get("success", False):
-            return {
-                "success": False,
-                "error": f"Failed to select workspace: {workspace}",
-                "details": workspace_result.get("error", "")
-            }
-        
         # Check if plan file exists
         plan_file = infra_path / f"{workspace}_plan.tfplan"
         if not plan_file.exists():
@@ -189,9 +190,9 @@ class TofuService:
                 "error": f"No plan file found for workspace {workspace}. Run plan first."
             }
         
-        # Run tf apply
+        # Run tf apply - TF_WORKSPACE will be set in environment
         apply_cmd = ["tofu", "apply", "-auto-approve", plan_file.name]
-        exit_code, stdout, stderr = TofuService._run_command(apply_cmd, project_id)
+        exit_code, stdout, stderr = await TofuService._run_command(apply_cmd, project_id, workspace)
         
         if exit_code != 0:
             return {
@@ -202,7 +203,7 @@ class TofuService:
         
         # Try to parse state after apply
         try:
-            state = TofuService.get_state(project_id, workspace=workspace, refresh=False)
+            state = await TofuService.get_state(project_id, workspace=workspace, refresh=False)
             return {
                 "success": True,
                 "output": stdout,
@@ -218,7 +219,7 @@ class TofuService:
             }
     
     @staticmethod
-    def run_destroy(project_id: str, workspace: Optional[str] = None) -> Dict[str, Any]:
+    async def run_destroy(project_id: str, workspace: Optional[str] = None) -> Dict[str, Any]:
         """Destroy resources defined at the project root"""
         # Default to default workspace if not specified
         if workspace is None:
@@ -230,21 +231,12 @@ class TofuService:
         if not infra_path.exists() or not infra_path.is_dir():
             raise ValueError(f"Infrastructure path does not exist for project: {project_id}")
         
-        # Switch to the requested workspace if needed
-        workspace_result = WorkspaceService.select_workspace(project_id, workspace)
-        if not workspace_result.get("success", False):
-            return {
-                "success": False,
-                "error": f"Failed to select workspace: {workspace}",
-                "details": workspace_result.get("error", "")
-            }
-        
         # Get variable files for the command (now centralized)
         var_file_args = VariableService.get_var_file_paths_for_command(project_id, workspace)
         
-        # Run tf destroy with workspace-specific variables
+        # Run tf destroy with workspace-specific variables - TF_WORKSPACE will be set in environment
         destroy_cmd = ["tofu", "destroy", "-auto-approve"] + var_file_args
-        exit_code, stdout, stderr = TofuService._run_command(destroy_cmd, project_id)
+        exit_code, stdout, stderr = await TofuService._run_command(destroy_cmd, project_id, workspace)
         
         if exit_code != 0:
             return {
@@ -260,7 +252,7 @@ class TofuService:
         }
     
     @staticmethod
-    def get_state(project_id: str, workspace: Optional[str] = None, refresh: bool = False) -> Dict[str, Any]:
+    async def get_state(project_id: str, workspace: Optional[str] = None, refresh: bool = False) -> Dict[str, Any]:
         """Get the current state at the project root"""
         # Default to default workspace if not specified
         if workspace is None:
@@ -271,25 +263,13 @@ class TofuService:
         
         if not infra_path.exists() or not infra_path.is_dir():
             raise ValueError(f"Infrastructure path does not exist for project: {project_id}")
-        
-        # Switch to the requested workspace if needed
-        workspace_result = WorkspaceService.select_workspace(project_id, workspace)
-        if not workspace_result.get("success", False):
-            return {
-                "success": False,
-                "error": f"Failed to select workspace: {workspace}",
-                "details": workspace_result.get("error", "")
-            }
             
-        # Build the command
-        state_cmd = ["tofu", "show", "-json"]
-        
-        # Add refresh flag if needed
+        # Add refresh if needed
         if refresh:
-            # First do a refresh with workspace-specific variables
+            # First do a refresh with workspace-specific variables - TF_WORKSPACE will be set in environment
             var_file_args = VariableService.get_var_file_paths_for_command(project_id, workspace)
             refresh_cmd = ["tofu", "refresh"] + var_file_args
-            exit_code, stdout, stderr = TofuService._run_command(refresh_cmd, project_id)
+            exit_code, stdout, stderr = await TofuService._run_command(refresh_cmd, project_id, workspace)
             if exit_code != 0:
                 return {
                     "success": False,
@@ -297,8 +277,11 @@ class TofuService:
                     "output": stdout
                 }
         
+        # Build the state command - TF_WORKSPACE will be set in environment
+        state_cmd = ["tofu", "show", "-json"]
+        
         # Run the state command
-        exit_code, stdout, stderr = TofuService._run_command(state_cmd, project_id)
+        exit_code, stdout, stderr = await TofuService._run_command(state_cmd, project_id, workspace)
         
         if exit_code != 0:
             return {

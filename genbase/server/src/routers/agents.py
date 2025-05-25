@@ -1,5 +1,6 @@
 """
 FastAPI router for agent operations
+Updated to include branch-specific tool configurations
 """
 from fastapi import APIRouter, HTTPException, Path as PathParam, Body, Query
 from pydantic import BaseModel
@@ -7,7 +8,7 @@ from typing import Optional, List, Dict, Any
 
 import yaml
 
-from src.agents.prompts import MAIN_BRANCH_SYSTEM_PROMPT
+from src.agents.prompts import render_main_branch_prompt
 from src.agents.tools import AgentTools
 from src.schemas.api import ChatMessageResponse, ChatMessageListResponse
 from ..logger import logger
@@ -16,7 +17,6 @@ from ..services.chat_service import ChatService
 from ..services.agent_service import AgentService
 
 from  ..config import config
-
 
 
 # Request models
@@ -33,6 +33,48 @@ router = APIRouter(
     tags=["agent"]
 )
 
+# Define tools for different branch types
+MAIN_BRANCH_TOOLS = [
+    # Read-only analysis tools for production safety
+    "get_all_blocks_summary",
+    "tf_read",
+    "tf_validate", 
+    "tf_plan",
+    
+    # Registry tools for discovery and analysis
+    "registry_search_modules",
+    "registry_list_modules", 
+    "registry_get_module_details",
+    "registry_get_module_versions",
+    "registry_get_module_downloads_summary",
+    "registry_list_module_providers",
+    "registry_get_module_download_info"
+]
+
+NON_MAIN_BRANCH_TOOLS = [
+    # All infrastructure management tools
+    "get_all_blocks_summary",
+    "tf_read",
+    "tf_write",
+    "tf_modify", 
+    "delete_file",
+    "tf_validate",
+    "tf_plan",
+    "sync_with_main",
+    "merge_changes",
+    "create_tf_file",
+    "create_folder",
+    
+    # All registry tools for module discovery and implementation
+    "registry_search_modules",
+    "registry_list_modules",
+    "registry_get_module_details", 
+    "registry_get_module_versions",
+    "registry_get_module_downloads_summary",
+    "registry_list_module_providers",
+    "registry_get_module_download_info"
+]
+
 
 @router.post("/messages", response_model=ChatMessageResponse)
 async def send_agent_message(
@@ -44,9 +86,12 @@ async def send_agent_message(
     
     This endpoint:
     1. Adds the user message to the chat session
-    2. Processes it with the agent
+    2. Processes it with the agent (with branch-appropriate tools)
     3. The agent can use tools and add multiple messages to the session
     4. Returns the final agent message
+    
+    Main branch: Read-only tools + registry tools for analysis
+    Feature branches: Full tools + registry tools for implementation
     
     The session_id is provided in the request body to avoid URL encoding issues.
     """
@@ -70,20 +115,32 @@ async def send_agent_message(
                 data={"error": user_message_result.get("error", "Unknown error")}
             )
         
-        # Now, process the message with the agent
-        if request.session_id  == config.MAIN_BRANCH:
+        # Configure agent based on branch type
+        if request.session_id == config.MAIN_BRANCH:
+            # MAIN BRANCH: Read-only analysis with registry discovery
             current_branch_summary = AgentTools(project_id=project_id, branch=request.session_id).get_all_blocks_summary()
-            system_prompt = MAIN_BRANCH_SYSTEM_PROMPT.format(
-                    project_id=project_id,
-                    current_branch_summary=yaml.dump(current_branch_summary, sort_keys=False, default_flow_style=False) )
+            system_prompt = render_main_branch_prompt(
+                project_id=project_id,
+                current_branch_summary=yaml.dump(current_branch_summary, sort_keys=False, default_flow_style=False)
+            )
 
-            agent_result = await AgentService(project_id=project_id, session_id=request.session_id, system_prompt=system_prompt).process_message(
+            agent_result = await AgentService(
+                project_id=project_id, 
+                session_id=request.session_id, 
+                system_prompt=system_prompt,
+                tools=MAIN_BRANCH_TOOLS  # Read-only + registry tools
+            ).process_message(
                 model=request.model,
                 temperature=request.temperature
             )
 
         else:
-            agent_result = await AgentService(project_id=project_id, session_id=request.session_id).process_message(
+            # FEATURE BRANCH: Full modification capabilities + registry tools
+            agent_result = await AgentService(
+                project_id=project_id, 
+                session_id=request.session_id,
+                tools=NON_MAIN_BRANCH_TOOLS  # All tools including write operations
+            ).process_message(
                 model=request.model,
                 temperature=request.temperature
             )
@@ -109,3 +166,5 @@ async def send_agent_message(
     except Exception as e:
         logger.error(f"Error processing agent message: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+

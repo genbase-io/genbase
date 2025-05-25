@@ -1,20 +1,22 @@
 """
-Additional tools for working with the Terraform Registry API.
-These tools allow the agent to search, discover, and analyze modules from the Terraform Registry.
+Optimized Terraform Registry Tools for LLM consumption.
+Returns concise, structured data focused on actionable information.
 """
+import os
 import requests
-from typing import Dict, List, Any, Optional, Tuple
-from urllib.parse import urljoin, urlencode
+from typing import Dict, List, Any, Optional
+from urllib.parse import urljoin
 import json
+import sys
 from ..logger import logger
 
 
-class TerraformRegistryTools:
+class RegistryTools:
     """
-    Tools for interacting with the Terraform Registry API
+    Tools for interacting with the Terraform Registry API.
+    Optimized for LLM consumption with concise, structured outputs.
     """
     
-    # Base URLs for different API versions
     BASE_URL_V1 = "https://registry.terraform.io/v1/modules/"
     BASE_URL_V2 = "https://registry.terraform.io/v2/modules/"
     
@@ -23,7 +25,7 @@ class TerraformRegistryTools:
         Initialize the TerraformRegistryTools
         
         Args:
-            project_id: The project identifier (for consistency with other tools)
+            project_id: The project identifier
             branch: The branch (for consistency with other tools)
         """
         self.project_id = project_id
@@ -34,47 +36,44 @@ class TerraformRegistryTools:
             'Accept': 'application/json'
         })
     
-    def registry_list_modules(
+    async def registry_list_modules(
         self,
         namespace: Optional[str] = None,
         provider: Optional[str] = None,
         verified: Optional[bool] = None,
-        limit: int = 20,
+        limit: int = 10,
         offset: int = 0
     ) -> Dict[str, Any]:
         """
         List modules from the Terraform Registry.
         
+        Returns a concise list of modules with essential information only.
+        Useful for browsing available modules by namespace or provider.
+        
         Args:
-            namespace: Optional namespace to filter by (e.g., "hashicorp", "terraform-aws-modules")
-            provider: Optional provider to filter by (e.g., "aws", "google", "azure")
+            namespace: Filter by namespace/organization (e.g., "hashicorp")
+            provider: Filter by provider (e.g., "aws", "google", "azure")
             verified: If True, only return verified/partner modules
-            limit: Maximum number of results to return (default: 20, max varies by endpoint)
-            offset: Number of results to skip for pagination
+            limit: Maximum results (default: 10, max: 50)
+            offset: Pagination offset
             
         Returns:
-            Dictionary with modules list and metadata
+            Dict with success status, module list, and pagination info
             
-        Examples:
-            # List all modules
-            registry_list_modules()
-            
-            # List AWS modules from HashiCorp
-            registry_list_modules(namespace="hashicorp", provider="aws")
-            
-            # List only verified modules
-            registry_list_modules(verified=True, limit=10)
+        Example:
+            registry_list_modules(namespace="hashicorp", provider="aws", verified=True)
         """
         try:
             # Build URL
             if namespace:
-                url = urljoin(self.BASE_URL_V1, f"{namespace}")
+                url = urljoin(self.BASE_URL_V1, namespace)
             else:
-                url = self.BASE_URL_V1
+                # remove /
+                url = self.BASE_URL_V1.rstrip('/')
             
             # Build query parameters
             params: Dict[str, Any] = {
-                'limit': min(limit, 100),  # Reasonable maximum
+                'limit': min(limit, 50),  # Cap at 50 for LLM context
                 'offset': max(offset, 0)
             }
             
@@ -88,24 +87,36 @@ class TerraformRegistryTools:
             response.raise_for_status()
             
             data = response.json()
+            modules = data.get("modules", [])
             
-            # Format response
+            # Process modules into concise format
+            processed_modules = []
+            for module in modules:
+                processed_modules.append({
+                    "address": f"{module.get('namespace', '')}/{module.get('name', '')}/{module.get('provider', '')}",
+                    "latest_version": module.get("version", ""),
+                    "description": module.get("description", "")[:100] + "..." if len(module.get("description", "")) > 100 else module.get("description", ""),
+                    "downloads": module.get("downloads", 0),
+                    "verified": module.get("verified", False),
+                    "last_updated": module.get("published_at", "")[:10]  # Just the date part
+                })
+            
+            # Check if more results available
+            meta = data.get("meta", {})
+            next_offset = meta.get("next_offset")
+            
             return {
                 "success": True,
                 "operation": "list_modules",
-                "total_results": len(data.get("modules", [])),
-                "modules": data.get("modules", []),
-                "meta": data.get("meta", {}),
-                "filters": {
-                    "namespace": namespace,
-                    "provider": provider,
-                    "verified": verified
-                },
-                "message": f"Retrieved {len(data.get('modules', []))} modules from Terraform Registry"
+                "message": f"Found {len(processed_modules)} modules",
+                "total_found": len(modules),
+                "showing": len(processed_modules),
+                "modules": processed_modules,
+                "next_page_available": next_offset is not None
             }
             
         except requests.exceptions.RequestException as e:
-            logger.error(f"Error listing modules from registry: {str(e)}")
+            logger.error(f"Error listing modules: {str(e)}")
             return {
                 "success": False,
                 "error": f"Failed to connect to Terraform Registry: {str(e)}"
@@ -117,38 +128,32 @@ class TerraformRegistryTools:
                 "error": str(e)
             }
     
-    def registry_search_modules(
+    async def registry_search_modules(
         self,
         query: str,
         provider: Optional[str] = None,
         namespace: Optional[str] = None,
-        verified: Optional[bool] = None,
-        limit: int = 20,
+        limit: int = 10,
         offset: int = 0
     ) -> Dict[str, Any]:
         """
         Search for modules in the Terraform Registry.
         
+        Returns top matching modules based on registry's relevance ranking.
+        Useful for finding modules by keywords or functionality.
+        
         Args:
-            query: Search query string (keywords or phrases)
-            provider: Optional provider to filter by (e.g., "aws", "google", "azure")  
-            namespace: Optional namespace to filter by (e.g., "hashicorp")
-            verified: If True, only return verified/partner modules
-            limit: Maximum number of results to return (default: 20)
-            offset: Number of results to skip for pagination
+            query: Search keywords (e.g., "vpc", "database", "load balancer")
+            provider: Filter by provider (e.g., "aws", "google", "azure")
+            namespace: Filter by namespace (e.g., "hashicorp")
+            limit: Maximum results (default: 10, max: 20)
+            offset: Pagination offset
             
         Returns:
-            Dictionary with search results and metadata
+            Dict with success status, matching modules, and search metadata
             
-        Examples:
-            # Search for VPC modules
-            registry_search_modules("vpc")
-            
-            # Search for AWS networking modules
-            registry_search_modules("network", provider="aws")
-            
-            # Search for verified security modules
-            registry_search_modules("security", verified=True)
+        Example:
+            registry_search_modules("vpc", provider="aws", verified=True)
         """
         try:
             url = urljoin(self.BASE_URL_V1, "search")
@@ -156,7 +161,7 @@ class TerraformRegistryTools:
             # Build query parameters
             params = {
                 'q': query,
-                'limit': min(limit, 100),
+                'limit': min(limit, 20),  # Cap at 20 for LLM context
                 'offset': max(offset, 0)
             }
             
@@ -164,28 +169,37 @@ class TerraformRegistryTools:
                 params['provider'] = provider
             if namespace:
                 params['namespace'] = namespace
-            if verified is not None:
-                params['verified'] = str(verified).lower()
-            
+
             # Make request
             response = self.session.get(url, params=params, timeout=30)
             response.raise_for_status()
             
             data = response.json()
+            modules = data.get("modules", [])
+            
+            # Process modules into concise format
+            processed_modules = []
+            for module in modules:
+                processed_modules.append({
+                    "address": f"{module.get('namespace', '')}/{module.get('name', '')}/{module.get('provider', '')}",
+                    "latest_version": module.get("version", ""),
+                    "description": module.get("description", "")[:100] + "..." if len(module.get("description", "")) > 100 else module.get("description", ""),
+                    "downloads": module.get("downloads", 0),
+                    "verified": module.get("verified", False)
+                })
+            
+            # Check if more results available
+            meta = data.get("meta", {})
+            next_offset = meta.get("next_offset")
             
             return {
                 "success": True,
                 "operation": "search_modules",
-                "query": query,
-                "total_results": len(data.get("modules", [])),
-                "modules": data.get("modules", []),
-                "meta": data.get("meta", {}),
-                "filters": {
-                    "provider": provider,
-                    "namespace": namespace,
-                    "verified": verified
-                },
-                "message": f"Found {len(data.get('modules', []))} modules matching '{query}'"
+                "message": f"Found {len(processed_modules)} modules matching search",
+                "total_matches": len(modules),
+                "showing": len(processed_modules),
+                "modules": processed_modules,
+                "next_page_available": next_offset is not None
             }
             
         except requests.exceptions.RequestException as e:
@@ -201,29 +215,30 @@ class TerraformRegistryTools:
                 "error": str(e)
             }
     
-    def registry_get_module_versions(
+    async def registry_get_module_versions(
         self,
         namespace: str,
         name: str,
-        provider: str
+        provider: str,
+        limit_versions: int = 5
     ) -> Dict[str, Any]:
         """
-        Get all available versions for a specific module.
+        Get available versions for a specific module.
+        
+        Returns version information for compatibility checking and selection.
+        Shows recent versions only to avoid overwhelming output.
         
         Args:
-            namespace: Module namespace/owner (e.g., "hashicorp", "terraform-aws-modules")
-            name: Module name (e.g., "consul", "vpc")
-            provider: Provider name (e.g., "aws", "google", "azurerm")
+            namespace: Module namespace/owner (e.g., "hashicorp")
+            name: Module name (e.g., "consul")
+            provider: Provider name (e.g., "aws")
+            limit_versions: Max versions to show (default: 5)
             
         Returns:
-            Dictionary with version information and dependencies
+            Dict with success status, version list, and compatibility info
             
-        Examples:
-            # Get versions for HashiCorp's AWS Consul module
+        Example:
             registry_get_module_versions("hashicorp", "consul", "aws")
-            
-            # Get versions for AWS VPC module
-            registry_get_module_versions("terraform-aws-modules", "vpc", "aws")
         """
         try:
             url = urljoin(self.BASE_URL_V1, f"{namespace}/{name}/{provider}/versions")
@@ -232,9 +247,8 @@ class TerraformRegistryTools:
             response.raise_for_status()
             
             data = response.json()
-            
-            # Extract version information
             modules = data.get("modules", [])
+            
             if not modules:
                 return {
                     "success": False,
@@ -242,18 +256,40 @@ class TerraformRegistryTools:
                 }
             
             module_info = modules[0]
-            versions = [v.get("version") for v in module_info.get("versions", [])]
+            versions_data = module_info.get("versions", [])
+            
+            # Process versions - limit to recent ones
+            processed_versions = []
+            for i, version_info in enumerate(versions_data[:limit_versions]):
+                version = version_info.get("version", "")
+                processed_versions.append({
+                    "version": version,
+                    "published": version_info.get("published_at", "")[:10] if version_info.get("published_at") else "",
+                    "status": "latest" if i == 0 else "stable"
+                })
+            
+            # Extract compatibility info from latest version
+            compatibility = {}
+            if versions_data:
+                latest_version = versions_data[0]
+                root_info = latest_version.get("root", {})
+                providers = root_info.get("providers", [])
+                
+                if providers:
+                    compatibility["provider_requirements"] = {}
+                    for prov in providers:
+                        if prov.get("name") and prov.get("version"):
+                            compatibility["provider_requirements"][prov["name"]] = prov["version"]
             
             return {
                 "success": True,
                 "operation": "get_module_versions",
                 "module": f"{namespace}/{name}/{provider}",
-                "total_versions": len(versions),
-                "versions": versions,
-                "latest_version": versions[0] if versions else None,
-                "source": module_info.get("source"),
-                "dependencies": data.get("modules", [])[1:],  # Additional modules are dependencies
-                "message": f"Found {len(versions)} versions for {namespace}/{name}/{provider}"
+                "message": f"Found {len(versions_data)} versions (showing {len(processed_versions)})",
+                "total_versions": len(versions_data),
+                "latest_version": processed_versions[0]["version"] if processed_versions else None,
+                "recent_versions": processed_versions,
+                "compatibility": compatibility
             }
             
         except requests.exceptions.RequestException as e:
@@ -269,31 +305,33 @@ class TerraformRegistryTools:
                 "error": str(e)
             }
     
-    def registry_get_module_details(
+    async def registry_get_module_details(
         self,
         namespace: str,
         name: str,
         provider: str,
-        version: Optional[str] = None
+        version: Optional[str] = None,
+        get_detailed_info: bool = False
     ) -> Dict[str, Any]:
         """
-        Get detailed information about a specific module version.
+        Get detailed information about a specific module.
+        
+        Returns structured module information including inputs, outputs, and architecture.
+        By default shows summary info; use get_detailed_info=True for comprehensive details.
         
         Args:
             namespace: Module namespace/owner (e.g., "hashicorp")
-            name: Module name (e.g., "consul") 
+            name: Module name (e.g., "consul")
             provider: Provider name (e.g., "aws")
-            version: Specific version (if None, gets latest version)
+            version: Specific version (if None, gets latest)
+            get_detailed_info: If True, include full inputs/outputs/resources
             
         Returns:
-            Dictionary with detailed module information including inputs, outputs, and submodules
+            Dict with module summary, usage info, and architecture details
             
-        Examples:
-            # Get latest version details
+        Example:
             registry_get_module_details("hashicorp", "consul", "aws")
-            
-            # Get specific version details
-            registry_get_module_details("hashicorp", "consul", "aws", "0.7.3")
+            registry_get_module_details("hashicorp", "consul", "aws", get_detailed_info=True)
         """
         try:
             if version:
@@ -306,58 +344,104 @@ class TerraformRegistryTools:
             
             data = response.json()
             
-            # Extract key information
-            root_module = data.get("root", {})
-            submodules = data.get("submodules", [])
-            
-            # Process inputs and outputs for better readability
-            inputs = []
-            for inp in root_module.get("inputs", []):
-                inputs.append({
-                    "name": inp.get("name"),
-                    "description": inp.get("description", ""),
-                    "type": inp.get("type", ""),
-                    "default": inp.get("default"),
-                    "required": inp.get("default") == ""
-                })
-            
-            outputs = []
-            for out in root_module.get("outputs", []):
-                outputs.append({
-                    "name": out.get("name"),
-                    "description": out.get("description", "")
-                })
-            
-            # Process submodules
-            processed_submodules = []
-            for sub in submodules:
-                processed_submodules.append({
-                    "path": sub.get("path"),
-                    "inputs": len(sub.get("inputs", [])),
-                    "outputs": len(sub.get("outputs", [])),
-                    "resources": len(sub.get("resources", []))
-                })
-            
-            return {
-                "success": True,
-                "operation": "get_module_details", 
-                "module": f"{namespace}/{name}/{provider}",
-                "version": data.get("version"),
+            # Extract basic info
+            summary = {
                 "description": data.get("description", ""),
-                "source": data.get("source", ""),
                 "verified": data.get("verified", False),
                 "downloads": data.get("downloads", 0),
-                "published_at": data.get("published_at", ""),
-                "providers": data.get("providers", []),
-                "inputs": inputs,
-                "outputs": outputs, 
-                "input_count": len(inputs),
-                "output_count": len(outputs),
-                "submodules": processed_submodules,
-                "submodule_count": len(processed_submodules),
-                "readme": root_module.get("readme", "")[:500] + "..." if len(root_module.get("readme", "")) > 500 else root_module.get("readme", ""),
-                "message": f"Retrieved details for {namespace}/{name}/{provider}" + (f" v{data.get('version')}" if data.get('version') else "")
+                "source": data.get("source", ""),
+                "published_at": data.get("published_at", "")[:10] if data.get("published_at") else ""
             }
+            
+            # Process root module information
+            root_module = data.get("root", {})
+            inputs = root_module.get("inputs", [])
+            outputs = root_module.get("outputs", [])
+            submodules = data.get("submodules", [])
+            
+            # Process inputs - show required ones, count optional
+            required_inputs = []
+            optional_count = 0
+            
+            for inp in inputs:
+                if inp.get("default") in [None, ""]:  # Required input
+                    if get_detailed_info or len(required_inputs) < 5:  # Limit unless detailed
+                        required_inputs.append({
+                            "name": inp.get("name", ""),
+                            "type": inp.get("type", "string"),
+                            "description": inp.get("description", "")[:80] + "..." if len(inp.get("description", "")) > 80 else inp.get("description", "")
+                        })
+                else:
+                    optional_count += 1
+            
+            # Process outputs
+            key_outputs = []
+            for out in outputs:
+                if get_detailed_info or len(key_outputs) < 5:  # Limit unless detailed
+                    key_outputs.append(out.get("name", ""))
+            
+            # Process submodules and resources
+            key_submodules = []
+            main_resources = []
+            
+            for sub in submodules[:3]:  # Limit to 3 key submodules
+                key_submodules.append(sub.get("path", "").split("/")[-1])  # Just the name
+                
+                # Get resources from submodule
+                for resource in sub.get("resources", [])[:3]:  # Limit resources
+                    res_type = resource.get("type", "")
+                    if res_type and res_type not in main_resources:
+                        main_resources.append(res_type)
+            
+            # Get resources from root module too
+            for resource in root_module.get("resources", [])[:5]:
+                res_type = resource.get("type", "")
+                if res_type and res_type not in main_resources:
+                    main_resources.append(res_type)
+            
+            # README summary
+            readme = root_module.get("readme", "")
+            readme_summary = ""
+            if readme:
+                # Get first paragraph or first 200 chars
+                first_para = readme.split('\n\n')[0] if '\n\n' in readme else readme
+                readme_summary = first_para[:200] + "..." if len(first_para) > 200 else first_para
+            
+            usage_info = {
+                "required_inputs": required_inputs,
+                "optional_inputs_count": optional_count,
+                "outputs_count": len(outputs),
+                "key_outputs": key_outputs[:5]  # Limit to 5 key outputs
+            }
+            
+            architecture_info = {
+                "submodules_count": len(submodules),
+                "key_submodules": key_submodules,
+                "main_resources": main_resources[:8]  # Limit to 8 main resources
+            }
+            
+            result = {
+                "success": True,
+                "operation": "get_module_details",
+                "module": f"{namespace}/{name}/{provider}",
+                "version": data.get("version"),
+                "message": "Module details retrieved",
+                "summary": summary,
+                "usage": usage_info,
+                "architecture": architecture_info
+            }
+            
+            # Add README summary if available
+            if readme_summary:
+                result["readme_summary"] = readme_summary
+            
+            # If detailed info requested, add full schemas
+            if get_detailed_info:
+                result["detailed_inputs"] = inputs
+                result["detailed_outputs"] = outputs
+                result["detailed_submodules"] = submodules
+            
+            return result
             
         except requests.exceptions.RequestException as e:
             logger.error(f"Error getting module details: {str(e)}")
@@ -372,7 +456,7 @@ class TerraformRegistryTools:
                 "error": str(e)
             }
     
-    def registry_get_module_download_info(
+    async def registry_get_module_download_info(
         self,
         namespace: str,
         name: str,
@@ -380,7 +464,10 @@ class TerraformRegistryTools:
         version: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Get download information for a module (returns download URL).
+        Get download information for a module.
+        
+        Returns the download URL for module integration/installation.
+        Used when you need to actually fetch the module source code.
         
         Args:
             namespace: Module namespace/owner
@@ -389,14 +476,10 @@ class TerraformRegistryTools:
             version: Specific version (if None, gets latest)
             
         Returns:
-            Dictionary with download information
+            Dict with download URL and basic info
             
-        Examples:
-            # Get download info for latest version
+        Example:
             registry_get_module_download_info("hashicorp", "consul", "aws")
-            
-            # Get download info for specific version  
-            registry_get_module_download_info("hashicorp", "consul", "aws", "0.7.3")
         """
         try:
             if version:
@@ -415,9 +498,8 @@ class TerraformRegistryTools:
                     "operation": "get_module_download_info",
                     "module": f"{namespace}/{name}/{provider}",
                     "version": version or "latest",
-                    "download_url": download_url,
-                    "status_code": response.status_code,
-                    "message": f"Download URL retrieved for {namespace}/{name}/{provider}"
+                    "message": "Download URL retrieved",
+                    "download_url": download_url
                 }
             else:
                 response.raise_for_status()
@@ -439,25 +521,27 @@ class TerraformRegistryTools:
                 "error": str(e)
             }
     
-    def registry_get_module_downloads_summary(
+    async def registry_get_module_downloads_summary(
         self,
         namespace: str,
         name: str,
         provider: str
     ) -> Dict[str, Any]:
         """
-        Get download metrics summary for a module (uses v2 API).
+        Get download metrics for a module.
+        
+        Returns popularity metrics to help assess module adoption and reliability.
+        Higher download counts generally indicate more mature, tested modules.
         
         Args:
             namespace: Module namespace/owner
-            name: Module name 
+            name: Module name
             provider: Provider name
             
         Returns:
-            Dictionary with download statistics
+            Dict with download statistics
             
-        Examples:
-            # Get download stats
+        Example:
             registry_get_module_downloads_summary("hashicorp", "consul", "aws")
         """
         try:
@@ -467,21 +551,18 @@ class TerraformRegistryTools:
             response.raise_for_status()
             
             data = response.json()
-            
-            # Extract metrics from v2 API format
             attributes = data.get("data", {}).get("attributes", {})
             
             return {
                 "success": True,
                 "operation": "get_module_downloads_summary",
                 "module": f"{namespace}/{name}/{provider}",
+                "message": f"{attributes.get('total', 0):,} total downloads",
                 "downloads": {
-                    "week": attributes.get("week", 0),
-                    "month": attributes.get("month", 0), 
-                    "year": attributes.get("year", 0),
-                    "total": attributes.get("total", 0)
-                },
-                "message": f"Download stats: {attributes.get('total', 0)} total downloads"
+                    "total": attributes.get("total", 0),
+                    "month": attributes.get("month", 0),
+                    "week": attributes.get("week", 0)
+                }
             }
             
         except requests.exceptions.RequestException as e:
@@ -497,7 +578,7 @@ class TerraformRegistryTools:
                 "error": str(e)
             }
     
-    def registry_list_module_providers(
+    async def registry_list_module_providers(
         self,
         namespace: str,
         name: str,
@@ -507,6 +588,9 @@ class TerraformRegistryTools:
         """
         List all providers available for a specific module.
         
+        Shows which cloud providers a module supports (aws, azure, gcp, etc.).
+        Useful when you want the same module functionality across different clouds.
+        
         Args:
             namespace: Module namespace/owner
             name: Module name
@@ -514,17 +598,16 @@ class TerraformRegistryTools:
             offset: Pagination offset
             
         Returns:
-            Dictionary with available providers for the module
+            Dict with available providers and their details
             
-        Examples:
-            # List all providers for consul module
+        Example:
             registry_list_module_providers("hashicorp", "consul")
         """
         try:
             url = urljoin(self.BASE_URL_V1, f"{namespace}/{name}")
             
             params = {
-                'limit': min(limit, 100),
+                'limit': min(limit, 50),
                 'offset': max(offset, 0)
             }
             
@@ -532,28 +615,26 @@ class TerraformRegistryTools:
             response.raise_for_status()
             
             data = response.json()
-            
             modules = data.get("modules", [])
-            providers = []
             
+            processed_providers = []
             for module in modules:
-                providers.append({
-                    "provider": module.get("provider"),
-                    "version": module.get("version"),
-                    "description": module.get("description", ""),
+                processed_providers.append({
+                    "provider": module.get("provider", ""),
+                    "latest_version": module.get("version", ""),
+                    "description": module.get("description", "")[:100] + "..." if len(module.get("description", "")) > 100 else module.get("description", ""),
                     "downloads": module.get("downloads", 0),
                     "verified": module.get("verified", False),
-                    "published_at": module.get("published_at", "")
+                    "last_updated": module.get("published_at", "")[:10] if module.get("published_at") else ""
                 })
             
             return {
                 "success": True,
                 "operation": "list_module_providers",
                 "module": f"{namespace}/{name}",
-                "provider_count": len(providers),
-                "providers": providers,
-                "meta": data.get("meta", {}),
-                "message": f"Found {len(providers)} providers for {namespace}/{name}"
+                "message": f"Found {len(processed_providers)} providers",
+                "provider_count": len(processed_providers),
+                "providers": processed_providers
             }
             
         except requests.exceptions.RequestException as e:
@@ -568,98 +649,24 @@ class TerraformRegistryTools:
                 "success": False,
                 "error": str(e)
             }
-    
-    def registry_recommend_modules(
-        self,
-        use_case: str,
-        provider: Optional[str] = None,
-        verified_only: bool = True,
-        limit: int = 10
-    ) -> Dict[str, Any]:
-        """
-        Recommend modules based on a use case description.
-        This combines search with filtering to provide relevant suggestions.
         
-        Args:
-            use_case: Description of what you want to build (e.g., "web application with database")
-            provider: Optional provider preference (e.g., "aws")
-            verified_only: Whether to only return verified modules
-            limit: Maximum number of recommendations
-            
-        Returns:
-            Dictionary with recommended modules
-            
-        Examples:
-            # Get recommendations for building a web app
-            registry_recommend_modules("web application load balancer", provider="aws")
-            
-            # Get recommendations for database setup
-            registry_recommend_modules("postgresql database", verified_only=True)
-        """
-        try:
-            # Extract keywords from use case for better search
-            search_terms = use_case.lower()
-            
-            # Perform search
-            search_result = self.registry_search_modules(
-                query=search_terms,
-                provider=provider,
-                verified=verified_only,
-                limit=limit * 2  # Get more results to filter better
-            )
-            
-            if not search_result.get("success"):
-                return search_result
-            
-            modules = search_result.get("modules", [])
-            
-            # Score and rank modules based on relevance
-            scored_modules = []
-            for module in modules:
-                score = 0
-                description = (module.get("description", "") + " " + module.get("name", "")).lower()
-                
-                # Simple scoring based on keyword matches
-                for word in search_terms.split():
-                    if word in description:
-                        score += 1
-                
-                # Boost score for verified modules
-                if module.get("verified"):
-                    score += 2
-                
-                # Boost score for high download count
-                downloads = module.get("downloads", 0)
-                if downloads > 1000:
-                    score += 1
-                if downloads > 10000:
-                    score += 1
-                
-                scored_modules.append({
-                    **module,
-                    "relevance_score": score
-                })
-            
-            # Sort by score and limit results
-            scored_modules.sort(key=lambda x: x["relevance_score"], reverse=True)
-            recommendations = scored_modules[:limit]
-            
-            return {
-                "success": True,
-                "operation": "recommend_modules",
-                "use_case": use_case,
-                "total_recommendations": len(recommendations),
-                "recommendations": recommendations,
-                "filters": {
-                    "provider": provider,
-                    "verified_only": verified_only
-                },
-                "message": f"Found {len(recommendations)} recommended modules for '{use_case}'"
-            }
-            
-        except Exception as e:
-            logger.error(f"Error generating recommendations: {str(e)}")
-            return {
-                "success": False,
-                "error": str(e)
-            }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

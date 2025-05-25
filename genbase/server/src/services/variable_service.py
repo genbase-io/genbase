@@ -1,5 +1,8 @@
+# ===== BACKEND CHANGES =====
+
+# 1. Update genbase/server/src/services/variable_service.py
 """
-Service for managing Terraform variables using JSON format
+Service for managing Terraform variables and Environment variables using JSON format and .env files
 """
 import os
 import json
@@ -10,35 +13,35 @@ from ..logger import logger
 from .project_service import ProjectService
 from .workspace_service import WorkspaceService
 
+# Add python-dotenv import (need to add this dependency)
+try:
+    from dotenv import set_key, unset_key, dotenv_values
+except ImportError:
+    logger.error("python-dotenv not installed. Run: pip install python-dotenv")
+    raise
+
 class VariableService:
     """
-    Service for managing Terraform variables using JSON format
+    Service for managing Terraform variables using JSON format and Environment variables using .env files
     
-    Variables are managed at the project level, not at the group level.
-    All variable files are stored at the project root.
+    Variables are managed per workspace only. No common/default variables.
+    All variable files are stored at the project root with workspace prefixes.
     """
     
-    # Base file names for variables (using .tfvars.json extension)
-    BASE_TFVARS_FILE = "terraform.tfvars.json"
-    BASE_SECRET_TFVARS_FILE = "secrets.auto.tfvars.json"
+    @staticmethod
+    def _get_variable_file_names(workspace: str) -> Tuple[str, str]:
+        """Get variable file names for a specific workspace"""
+        # All workspaces use workspace-prefixed file names
+        return f"{workspace}.terraform.tfvars.json", f"{workspace}.secrets.auto.tfvars.json"
     
     @staticmethod
-    def _get_variable_file_names(workspace: Optional[str] = None) -> Tuple[str, str]:
-        """Get variable file names based on workspace"""
-        if not workspace or workspace == WorkspaceService.DEFAULT_WORKSPACE:
-            # Default workspace uses standard file names
-            return VariableService.BASE_TFVARS_FILE, VariableService.BASE_SECRET_TFVARS_FILE
-        else:
-            # Other workspaces use workspace-prefixed file names
-            return f"{workspace}.{VariableService.BASE_TFVARS_FILE}", f"{workspace}.{VariableService.BASE_SECRET_TFVARS_FILE}"
+    def _get_env_file_name(workspace: str) -> str:
+        """Get environment file name for a specific workspace"""
+        return f"{workspace}.env"
     
     @staticmethod
-    def get_variable_files(project_id: str, workspace: Optional[str] = None) -> Tuple[Path, Path]:
-        """Get paths to variable files for a project"""
-        # Resolve workspace if not provided
-        if workspace is None:
-            workspace = WorkspaceService.get_current_workspace(project_id)
-            
+    def get_variable_files(project_id: str, workspace: str) -> Tuple[Path, Path]:
+        """Get paths to variable files for a project and workspace"""
         # Get file names based on workspace
         tfvars_filename, secret_tfvars_filename = VariableService._get_variable_file_names(workspace)
         
@@ -51,6 +54,16 @@ class VariableService:
         secret_tfvars_path = infra_path / secret_tfvars_filename
         
         return tfvars_path, secret_tfvars_path
+    
+    @staticmethod
+    def get_env_file_path(project_id: str, workspace: str) -> Path:
+        """Get path to environment file for a project and workspace"""
+        infra_path = ProjectService.get_infrastructure_path(project_id)
+        if not infra_path.exists() or not infra_path.is_dir():
+            raise ValueError(f"Infrastructure directory not found for project: {project_id}")
+        
+        env_filename = VariableService._get_env_file_name(workspace)
+        return infra_path / env_filename
     
     @staticmethod
     def _load_json_file(file_path: Path) -> Dict[str, Any]:
@@ -85,8 +98,25 @@ class VariableService:
             return False
     
     @staticmethod
-    def list_variables(project_id: str, workspace: Optional[str] = None) -> List[Dict[str, Any]]:
+    def _ensure_env_file_exists(file_path: Path) -> bool:
+        """Ensure environment file exists with proper permissions"""
+        try:
+            if not file_path.exists():
+                # Create parent directory if it doesn't exist
+                file_path.parent.mkdir(parents=True, exist_ok=True)
+                # Create the file with restricted permissions
+                file_path.touch(mode=0o600, exist_ok=False)
+            return True
+        except Exception as e:
+            logger.error(f"Error creating env file {file_path}: {str(e)}")
+            return False
+    
+    @staticmethod
+    def list_variables(project_id: str, workspace: str) -> List[Dict[str, Any]]:
         """List all variables in a project for a specific workspace"""
+        if not workspace:
+            raise ValueError("Workspace is required for listing variables")
+            
         tfvars_path, secret_tfvars_path = VariableService.get_variable_files(project_id, workspace)
         
         # Load variables from files
@@ -104,7 +134,8 @@ class VariableService:
                 "value": value,
                 "type": var_type,
                 "is_secret": False,
-                "workspace": workspace or WorkspaceService.DEFAULT_WORKSPACE
+                "workspace": workspace,
+                "variable_type": "terraform"
             })
         
         # Add secret variables
@@ -115,10 +146,41 @@ class VariableService:
                 "value": value,
                 "type": var_type,
                 "is_secret": True,
-                "workspace": workspace or WorkspaceService.DEFAULT_WORKSPACE
+                "workspace": workspace,
+                "variable_type": "terraform"
             })
         
         return result
+    
+    @staticmethod
+    def list_env_variables(project_id: str, workspace: str) -> List[Dict[str, Any]]:
+        """List all environment variables in a project for a specific workspace"""
+        if not workspace:
+            raise ValueError("Workspace is required for listing environment variables")
+        
+        env_file_path = VariableService.get_env_file_path(project_id, workspace)
+        
+        # Load environment variables from file
+        if not env_file_path.exists():
+            return []
+        
+        try:
+            env_vars = dotenv_values(str(env_file_path))
+            result = []
+            
+            for name, value in env_vars.items():
+                if name and value is not None:  # Skip empty names or None values
+                    result.append({
+                        "name": name,
+                        "value": value,
+                        "workspace": workspace,
+                        "variable_type": "environment"
+                    })
+            
+            return result
+        except Exception as e:
+            logger.error(f"Error reading env file {env_file_path}: {str(e)}")
+            return []
     
     @staticmethod
     def _infer_type(value: Any) -> str:
@@ -137,11 +199,28 @@ class VariableService:
             return "string"
     
     @staticmethod
-    def get_variable(project_id: str, variable_name: str, workspace: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        """Get a specific variable"""
+    def get_variable(project_id: str, variable_name: str, workspace: str) -> Optional[Dict[str, Any]]:
+        """Get a specific variable from a workspace"""
+        if not workspace:
+            raise ValueError("Workspace is required for getting variable")
+            
         variables = VariableService.list_variables(project_id, workspace)
         
         for var in variables:
+            if var["name"] == variable_name:
+                return var
+                
+        return None
+    
+    @staticmethod
+    def get_env_variable(project_id: str, variable_name: str, workspace: str) -> Optional[Dict[str, Any]]:
+        """Get a specific environment variable from a workspace"""
+        if not workspace:
+            raise ValueError("Workspace is required for getting environment variable")
+            
+        env_variables = VariableService.list_env_variables(project_id, workspace)
+        
+        for var in env_variables:
             if var["name"] == variable_name:
                 return var
                 
@@ -152,13 +231,29 @@ class VariableService:
         project_id: str, 
         name: str, 
         value: Any, 
+        workspace: str,
         is_secret: bool = False,
-        description: Optional[str] = None,
-        workspace: Optional[str] = None
+        description: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Create or update a variable at the project level"""
+        """Create or update a variable in a specific workspace"""
+        if not workspace:
+            raise ValueError("Workspace is required for creating/updating variables")
+            
         # Get paths to variable files
         tfvars_path, secret_tfvars_path = VariableService.get_variable_files(project_id, workspace)
+        
+        # If this is a secret variable, we need to check if it exists in regular vars and remove it
+        if is_secret:
+            regular_vars = VariableService._load_json_file(tfvars_path)
+            if name in regular_vars:
+                del regular_vars[name]
+                VariableService._write_json_file(tfvars_path, regular_vars)
+        else:
+            # If this is a regular variable, check if it exists in secret vars and remove it
+            secret_vars = VariableService._load_json_file(secret_tfvars_path)
+            if name in secret_vars:
+                del secret_vars[name]
+                VariableService._write_json_file(secret_tfvars_path, secret_vars)
         
         # Determine which file to use
         target_path = secret_tfvars_path if is_secret else tfvars_path
@@ -184,12 +279,53 @@ class VariableService:
             "type": var_type,
             "is_secret": is_secret,
             "description": description,
-            "workspace": workspace or WorkspaceService.DEFAULT_WORKSPACE
+            "workspace": workspace,
+            "variable_type": "terraform"
         }
     
     @staticmethod
-    def delete_variable(project_id: str, variable_name: str, workspace: Optional[str] = None) -> bool:
-        """Delete a variable at the project level"""
+    def create_or_update_env_variable(
+        project_id: str, 
+        name: str, 
+        value: str, 
+        workspace: str
+    ) -> Dict[str, Any]:
+        """Create or update an environment variable in a specific workspace"""
+        if not workspace:
+            raise ValueError("Workspace is required for creating/updating environment variables")
+        
+        if not name or not name.replace('_', '').isalnum():
+            raise ValueError(f"Invalid environment variable name: {name}")
+        
+        env_file_path = VariableService.get_env_file_path(project_id, workspace)
+        
+        # Ensure the env file exists
+        if not VariableService._ensure_env_file_exists(env_file_path):
+            raise ValueError(f"Failed to create environment file")
+        
+        try:
+            # Use python-dotenv to set the variable
+            success = set_key(str(env_file_path), name, value)
+            
+            if not success:
+                raise ValueError(f"Failed to set environment variable")
+            
+            return {
+                "name": name,
+                "value": value,
+                "workspace": workspace,
+                "variable_type": "environment"
+            }
+        except Exception as e:
+            logger.error(f"Error setting environment variable {name}: {str(e)}")
+            raise ValueError(f"Failed to set environment variable: {str(e)}")
+    
+    @staticmethod
+    def delete_variable(project_id: str, variable_name: str, workspace: str) -> bool:
+        """Delete a variable from a specific workspace"""
+        if not workspace:
+            raise ValueError("Workspace is required for deleting variables")
+            
         # Check if variable exists
         variable = VariableService.get_variable(project_id, variable_name, workspace)
         if not variable:
@@ -210,37 +346,101 @@ class VariableService:
         
         # Write back to file
         return VariableService._write_json_file(target_path, current_vars)
+    
+    @staticmethod
+    def delete_env_variable(project_id: str, variable_name: str, workspace: str) -> bool:
+        """Delete an environment variable from a specific workspace"""
+        if not workspace:
+            raise ValueError("Workspace is required for deleting environment variables")
+        
+        # Check if variable exists
+        variable = VariableService.get_env_variable(project_id, variable_name, workspace)
+        if not variable:
+            raise ValueError(f"Environment variable not found: {variable_name}")
+        
+        env_file_path = VariableService.get_env_file_path(project_id, workspace)
+        
+        if not env_file_path.exists():
+            return True  # Already doesn't exist
+        
+        try:
+            # Use python-dotenv to unset the variable
+            success, _ = unset_key(str(env_file_path), variable_name)
+            return bool(success)
+        except Exception as e:
+            logger.error(f"Error deleting environment variable {variable_name}: {str(e)}")
+            return False
 
     @staticmethod
-    def get_var_file_paths_for_command(project_id: str, workspace: Optional[str] = None) -> List[str]:
-        """Get variable file paths to use in OpenTofu commands"""
-        # Get variable files for both default and specified workspace
+    def get_var_file_paths_for_command(project_id: str, workspace: str) -> List[str]:
+        """Get variable file paths to use in OpenTofu commands for a specific workspace"""
+        if not workspace:
+            raise ValueError("Workspace is required for getting var file paths")
+            
         result = []
         
-        # First get default workspace files (always include these)
-        default_tfvars_path, default_secret_tfvars_path = VariableService.get_variable_files(
-            project_id, WorkspaceService.DEFAULT_WORKSPACE
-        )
+        # Get variable files for the specified workspace
+        tfvars_path, secret_tfvars_path = VariableService.get_variable_files(project_id, workspace)
         
-        # Check if default variable files exist and add them
-        if default_tfvars_path.exists():
-            result.append(f"-var-file={default_tfvars_path.name}")
+        # Check if workspace variable files exist and add them
+        if tfvars_path.exists():
+            result.append(f"-var-file={tfvars_path.name}")
         
-        if default_secret_tfvars_path.exists():
+        if secret_tfvars_path.exists():
             # Secrets should be loaded automatically because of the .auto. in the filename,
             # but we explicitly include them for clarity
-            result.append(f"-var-file={default_secret_tfvars_path.name}")
-        
-        # If a specific workspace is requested and it's not default, add those files too
-        if workspace and workspace != WorkspaceService.DEFAULT_WORKSPACE:
-            workspace_tfvars_path, workspace_secret_tfvars_path = VariableService.get_variable_files(
-                project_id, workspace
-            )
-            
-            if workspace_tfvars_path.exists():
-                result.append(f"-var-file={workspace_tfvars_path.name}")
-            
-            if workspace_secret_tfvars_path.exists():
-                result.append(f"-var-file={workspace_secret_tfvars_path.name}")
+            result.append(f"-var-file={secret_tfvars_path.name}")
         
         return result
+    
+    @staticmethod
+    def load_env_variables_for_command(project_id: str, workspace: str) -> Dict[str, str]:
+        """Load environment variables for a workspace to use in command execution"""
+        if not workspace:
+            return {}
+        
+        env_file_path = VariableService.get_env_file_path(project_id, workspace)
+        
+        if not env_file_path.exists():
+            return {}
+        
+        try:
+            env_vars = dotenv_values(str(env_file_path))
+            # Filter out None values and ensure all values are strings
+            return {k: str(v) for k, v in env_vars.items() if k and v is not None}
+        except Exception as e:
+            logger.error(f"Error loading environment variables from {env_file_path}: {str(e)}")
+            return {}
+    
+    @staticmethod
+    def get_env_for_subprocess(project_id: str, workspace: str, base_env: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+        """
+        Get environment variables for subprocess execution
+        
+        Args:
+            project_id: The project identifier
+            workspace: The workspace name
+            base_env: Base environment to merge with (defaults to os.environ.copy())
+            
+        Returns:
+            Dictionary of environment variables ready for subprocess use
+            
+        Example:
+            env = VariableService.get_env_for_subprocess("myproject", "dev")
+            subprocess.run(["tofu", "plan"], env=env, cwd=infra_path)
+        """
+
+
+        if base_env is None:
+            import os
+            env = os.environ.copy()
+        else:
+            env = base_env.copy()
+        
+        # Load and merge workspace-specific environment variables
+        workspace_env = VariableService.load_env_variables_for_command(project_id, workspace)
+        env.update(workspace_env)
+        
+        logger.debug(f"Loaded {len(workspace_env)} environment variables for workspace '{workspace}' in project '{project_id}'")
+        
+        return env

@@ -103,47 +103,6 @@ async def create_workspace(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/select", response_model=WorkspaceResponse)
-async def select_workspace(
-    request: WorkspaceRequest,
-    project_id: str = PathParam(..., title="Project ID")
-):
-    """Select (switch to) a workspace at the project level"""
-    try:
-        # Check if project exists
-        project = ProjectService.get_project(project_id)
-        if not project:
-            raise HTTPException(status_code=404, detail=f"Project not found: {project_id}")
-        
-        try:
-            result = WorkspaceService.select_workspace(project_id, request.name)
-            
-            # Check if there was an error
-            if not result.get("success", True):
-                raise HTTPException(status_code=400, detail=result.get("error", "Failed to select workspace"))
-                
-            # Check if the workspace was already selected
-            if result.get("already_selected", False):
-                return WorkspaceResponse(
-                    success=True,
-                    message=f"Workspace '{request.name}' is already selected",
-                    data=result
-                )
-            
-            return WorkspaceResponse(
-                success=True,
-                message=f"Switched to workspace '{request.name}' successfully",
-                data=result
-            )
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error selecting workspace: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
 
 @router.delete("/{workspace_name}", response_model=WorkspaceResponse)
 async def delete_workspace(

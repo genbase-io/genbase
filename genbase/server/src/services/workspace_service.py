@@ -26,6 +26,7 @@ class WorkspaceService:
         infra_path = ProjectService.get_infrastructure_path(project_id)
         
         logger.debug(f"Running workspace command: {' '.join(cmd)} in {infra_path}")
+
         
         process = subprocess.Popen(
             cmd,
@@ -100,23 +101,6 @@ class WorkspaceService:
         return workspaces
     
     @staticmethod
-    def get_current_workspace(project_id: str) -> str:
-        """Get the current workspace name for a project"""
-        try:
-            workspaces = WorkspaceService.list_workspaces(project_id)
-            
-            for workspace in workspaces:
-                if workspace.get("is_current", False):
-                    return workspace["name"]
-                    
-            # If no current workspace found, assume default
-            return WorkspaceService.DEFAULT_WORKSPACE
-        except Exception as e:
-            logger.error(f"Error getting current workspace: {str(e)}")
-            # Fallback to default workspace
-            return WorkspaceService.DEFAULT_WORKSPACE
-    
-    @staticmethod
     def create_workspace(project_id: str, workspace_name: str) -> Dict[str, Any]:
         """Create a new workspace at the project level"""
         # Validate workspace name
@@ -165,78 +149,7 @@ class WorkspaceService:
             "is_current": True,  # New workspace becomes the current one
             "already_exists": False
         }
-    
-    @staticmethod
-    def select_workspace(project_id: str, workspace_name: str) -> Dict[str, Any]:
-        """
-        Select (switch to) a workspace at the project level
-        
-        Returns a dict with success status and workspace information.
-        """
-        # Get the infrastructure root path
-        infra_path = ProjectService.get_infrastructure_path(project_id)
-        
-        if not infra_path.exists() or not infra_path.is_dir():
-            return {
-                "success": False,
-                "error": f"Infrastructure path does not exist for project: {project_id}"
-            }
-        
-        # Check if workspace exists
-        workspaces = WorkspaceService.list_workspaces(project_id)
-        workspace_exists = False
-        
-        for ws in workspaces:
-            if ws["name"] == workspace_name:
-                workspace_exists = True
-                # If it's already current, return early
-                if ws.get("is_current", False):
-                    return {
-                        "success": True,
-                        "name": workspace_name,
-                        "is_current": True,
-                        "already_selected": True
-                    }
-                break
-        
-        # Create workspace if it doesn't exist
-        if not workspace_exists:
-            # For default workspace, it should already exist, so this is an error
-            if workspace_name == WorkspaceService.DEFAULT_WORKSPACE:
-                return {
-                    "success": False,
-                    "error": f"Default workspace not found. Terraform may not be initialized."
-                }
-            
-            # Create the workspace
-            create_result = WorkspaceService.create_workspace(project_id, workspace_name)
-            if not create_result.get("success", False):
-                return create_result
-                
-            return {
-                "success": True,
-                "name": workspace_name,
-                "is_current": True,
-                "already_selected": False
-            }
-        
-        # Select the workspace
-        select_cmd = ["tofu", "workspace", "select", workspace_name]
-        exit_code, stdout, stderr = WorkspaceService._run_workspace_command(select_cmd, project_id)
-        
-        if exit_code != 0:
-            return {
-                "success": False,
-                "error": f"Failed to select workspace: {stderr}"
-            }
-        
-        return {
-            "success": True,
-            "name": workspace_name,
-            "is_current": True,
-            "already_selected": False
-        }
-    
+
     @staticmethod
     def delete_workspace(project_id: str, workspace_name: str) -> Dict[str, Any]:
         """Delete a workspace at the project level"""

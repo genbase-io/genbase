@@ -34,7 +34,7 @@ async def run_plan(
         if not project:
             raise HTTPException(status_code=404, detail=f"Project not found: {project_id}")
         
-        result = TofuService.run_plan(project_id, request.workspace)
+        result = await TofuService.run_plan(project_id, request.workspace)
         
         if not result.get("success", False):
             return PlanResponse(
@@ -69,7 +69,7 @@ async def run_apply(
         if not project:
             raise HTTPException(status_code=404, detail=f"Project not found: {project_id}")
         
-        result = TofuService.run_apply(project_id, request.workspace)
+        result = await TofuService.run_apply(project_id, request.workspace)
         
         if not result.get("success", False):
             return ApplyResponse(
@@ -104,7 +104,7 @@ async def run_destroy(
         if not project:
             raise HTTPException(status_code=404, detail=f"Project not found: {project_id}")
         
-        result = TofuService.run_destroy(project_id, request.workspace)
+        result = await TofuService.run_destroy(project_id, request.workspace)
         
         if not result.get("success", False):
             return DestroyResponse(
@@ -140,7 +140,7 @@ async def get_state(
         if not project:
             raise HTTPException(status_code=404, detail=f"Project not found: {project_id}")
         
-        result = TofuService.get_state(project_id, workspace=workspace, refresh=refresh)
+        result = await TofuService.get_state(project_id, workspace=workspace, refresh=refresh)
         
         if not result.get("success", False):
             return StateResponse(

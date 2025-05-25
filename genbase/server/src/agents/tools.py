@@ -2,6 +2,7 @@
 Tools for working with Terraform files and blocks in a project.
 These tools are used by AI agents to analyze and manipulate infrastructure code.
 """
+import asyncio
 import re
 import hcl2
 import json
@@ -12,6 +13,7 @@ import subprocess
 
 from pydantic import BaseModel, Field
 
+from src.agents.registry_tools import RegistryTools
 from src.services.tf_service import TofuService
 from src.services.git_service import CommitResult, GitService
 
@@ -40,8 +42,104 @@ class AgentTools:
         """
         self.project_id = project_id
         self.branch = branch
+
+        self.registry_tools = RegistryTools(project_id, branch)
+
     
-    def get_all_blocks_summary(self) -> Dict[str, Any]:
+
+
+
+    @staticmethod
+    async def _ensure_result_serializable(obj):
+        """
+        Recursively ensure a result object is JSON serializable by awaiting any coroutines
+        """
+        import asyncio
+        import inspect
+        
+        if inspect.iscoroutine(obj):
+            # If the object itself is a coroutine, await it
+            return await obj
+        elif isinstance(obj, dict):
+            # Recursively process dictionary values
+            result = {}
+            for key, value in obj.items():
+                result[key] = await AgentTools._ensure_result_serializable(value)
+            return result
+        elif isinstance(obj, (list, tuple)):
+            # Recursively process list/tuple items
+            result = []
+            for item in obj:
+                result.append(await AgentTools._ensure_result_serializable(item))
+            return result if isinstance(obj, list) else tuple(result)
+        else:
+            # For other types, just return as-is
+            return obj
+
+
+    @classmethod
+    def _add_registry_methods(cls):
+        """
+        Dynamically add all registry methods to this class.
+        Call this after the class definition to add all registry_* methods.
+        """
+        # Get all public methods from TerraformRegistryTools that start with 'registry_'
+        for method_name in dir(RegistryTools):
+            if (method_name.startswith('registry_') and 
+                not method_name.startswith('_') and 
+                callable(getattr(RegistryTools, method_name))):
+                
+                # Get the original method
+                original_method = getattr(RegistryTools, method_name)
+                
+                # Create a wrapper function that delegates to registry_tools
+                def create_wrapper(method_name, original_method):
+                    async def wrapper(self, *args, **kwargs):
+                        # Get the method from the registry tools instance
+                        method_to_call = getattr(self.registry_tools, method_name)
+                        
+                        # Since RegistryTools methods are now async, await them directly
+                        try:
+                            if inspect.iscoroutinefunction(method_to_call):
+                                result = await method_to_call(*args, **kwargs)
+                            else:
+                                # If somehow still sync, run in thread
+                                result = await asyncio.to_thread(method_to_call, *args, **kwargs)
+                            
+                            # Ensure the result doesn't contain any coroutines
+                            return await AgentTools._ensure_result_serializable(result)
+                        except Exception as e:
+                            logger.error(f"Error in registry method {method_name}: {str(e)}")
+                            return {
+                                "success": False,
+                                "error": str(e)
+                            }
+                    
+                    # Preserve the original method's metadata
+                    wrapper.__name__ = method_name
+                    wrapper.__qualname__ = f"{cls.__name__}.{method_name}"
+                    wrapper.__doc__ = original_method.__doc__
+                    wrapper.__annotations__ = getattr(original_method, '__annotations__', {})
+                    
+                    # Preserve the signature for inspect.signature() to work
+                    import inspect
+                    original_sig = inspect.signature(original_method)
+                    # Remove 'self' parameter from original method since it's from another class
+                    params = list(original_sig.parameters.values())[1:]
+                    new_sig = original_sig.replace(parameters=params)
+                    wrapper.__signature__ = new_sig
+                    
+                    return wrapper
+                
+                # Create and add the wrapper method to our class
+                wrapper_method = create_wrapper(method_name, original_method)
+                setattr(cls, method_name, wrapper_method)
+
+
+
+
+
+    async def get_all_blocks_summary(self) -> Dict[str, Any]:
         """
         Get a summary of all blocks in all Terraform files for a project.
         This includes block type, labels, and dependencies between blocks.
@@ -179,7 +277,7 @@ class AgentTools:
 
 
     # TOOL 1: Read/Discover Operations
-    def tf_read(
+    async def tf_read(
         self, 
         file_path: str, 
         block_address: Optional[str] = None
@@ -273,7 +371,7 @@ class AgentTools:
             }
 
     # TOOL 2: Write Operations (Create/Replace)
-    def tf_write(
+    async def tf_write(
         self, 
         file_path: str, 
         block_content: str, 
@@ -371,10 +469,10 @@ class AgentTools:
                     file.write(current_content)
                 
                 # Format the file
-                self._hcl_format_file(abs_file_path)
+                await self._hcl_format_file(abs_file_path)
                 
                 # Validate
-                validation = self._validate_hcl_file(abs_file_path)
+                validation = await self._validate_hcl_file(abs_file_path)
                 if not validation["success"]:
                     # Restore original content
                     with open(abs_file_path, 'w', encoding='utf-8') as file:
@@ -412,7 +510,7 @@ class AgentTools:
             }
 
     # TOOL 3: Modify Operations (Remove/Move/Nested)
-    def tf_modify(
+    async def tf_modify(
         self, 
         file_path: str, 
         operation: str, 
@@ -581,58 +679,53 @@ class AgentTools:
             }
 
     # Helper functions (shared)
-    def _check_hcledit_available(self) -> bool:
-        """Check if hcledit CLI tool is available"""
+    async def _check_hcledit_available(self) -> bool:
+        """Check if hcledit CLI tool is available - ASYNC"""
         try:
-            result = subprocess.run(
-                ["hcledit", "version"],
-                capture_output=True,
-                text=True,
-                timeout=10
+            process = await asyncio.create_subprocess_exec(
+                "hcledit", "version",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
             )
-            return result.returncode == 0
+            await asyncio.wait_for(process.communicate(), timeout=10)
+            return process.returncode == 0
         except:
             return False
 
-    def _hcl_format_file(self, file_path: Path) -> bool:
-        """Format the HCL file using hcledit"""
+    async def _hcl_format_file(self, file_path: Path) -> bool:
+        """Format the HCL file using hcledit - ASYNC"""
         try:
-            result = subprocess.run(
-                ["hcledit", "fmt", "-f", str(file_path), "-u"],
-                capture_output=True,
-                text=True,
-                timeout=30
+            process = await asyncio.create_subprocess_exec(
+                "hcledit", "fmt", "-f", str(file_path), "-u",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
             )
-            return result.returncode == 0
+            await asyncio.wait_for(process.communicate(), timeout=30)
+            return process.returncode == 0
         except:
             return False
 
-    def _validate_hcl_file(self, file_path: Path) -> Dict[str, Any]:
-        """Validate HCL file syntax"""
+
+    async def _validate_hcl_file(self, file_path: Path) -> Dict[str, Any]:
+        """Validate HCL file syntax - ASYNC"""
         try:
-            import hcl2
-            with open(file_path, 'r', encoding='utf-8') as file:
-                content = file.read()
-            hcl2.api.loads(content)
-            return {"success": True}
+            # Run HCL validation in a thread since hcl2 is synchronous
+            def validate_sync():
+                import hcl2
+                content = file_path.read_text(encoding='utf-8')
+                hcl2.api.loads(content)
+                return {"success": True}
+            
+            return await asyncio.to_thread(validate_sync)
         except Exception as e:
             return {"success": False, "error": f"HCL validation failed: {str(e)}"}
 
-    def delete_file(self, file_path: str) -> Dict[str, Any]:
+    async def delete_file(self, file_path: str) -> Dict[str, Any]:
         """
-        Delete a Terraform file.
-        
-        Args:
-            file_path: Path to the .tf file relative to infrastructure root
-            
-        Returns:
-            Dictionary with success status
+        Delete a Terraform file - ASYNC
         """
         try:
-            # Get infrastructure path for this branch
             infra_path = ProjectService.get_infrastructure_path(self.project_id, self.branch)
-            
-            # Construct absolute path to the file
             abs_file_path = infra_path / file_path
             
             if not abs_file_path.exists():
@@ -641,7 +734,6 @@ class AgentTools:
                     "error": f"File not found: {file_path}"
                 }
             
-            # Check if it's a .tf file
             if not abs_file_path.suffix == '.tf':
                 return {
                     "success": False,
@@ -649,7 +741,7 @@ class AgentTools:
                 }
             
             # Delete the file
-            abs_file_path.unlink()
+            await asyncio.to_thread(abs_file_path.unlink)
 
             # Auto-commit the deletion
             commit_result = self._auto_commit(
@@ -673,8 +765,50 @@ class AgentTools:
                 "success": False,
                 "error": str(e)
             }
-    
-    def tf_validate(self) -> Dict[str, Any]:
+
+    async def create_folder(self, folder_path: str) -> Dict[str, Any]:
+        """Create a new folder in the infrastructure directory - ASYNC"""
+        try:
+            infra_path = ProjectService.get_infrastructure_path(self.project_id, self.branch)
+            abs_folder_path = infra_path / folder_path
+            
+            if abs_folder_path.exists():
+                return {"success": False, "error": f"Folder already exists: {folder_path}"}
+            
+            await asyncio.to_thread(abs_folder_path.mkdir, parents=True)
+            
+            return {"success": True, "message": f"Created folder: {folder_path}"}
+            
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    async def create_tf_file(self, file_path: str) -> Dict[str, Any]:
+        """Create a new empty Terraform (.tf) file - ASYNC"""
+        try:
+            if not file_path.endswith('.tf'):
+                return {"success": False, "error": f"File must have .tf extension: {file_path}"}
+            
+            infra_path = ProjectService.get_infrastructure_path(self.project_id, self.branch)
+            abs_file_path = infra_path / file_path
+            
+            if abs_file_path.exists():
+                return {"success": False, "error": f"File already exists: {file_path}"}
+            
+            await asyncio.to_thread(abs_file_path.parent.mkdir, parents=True, exist_ok=True)
+            await asyncio.to_thread(abs_file_path.touch)
+            
+            return {"success": True, "message": f"Created file: {file_path}"}
+            
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+
+
+
+
+
+
+    async def tf_validate(self) -> Dict[str, Any]:
         """
         Run terraform validate on the project.
             
@@ -749,7 +883,7 @@ class AgentTools:
 
 
 
-    def check_branch_sync(self, target_branch: Optional[str] = None) -> Dict[str, Any]:
+    async def check_branch_sync(self, target_branch: Optional[str] = None) -> Dict[str, Any]:
         """
         Check if the current branch is in sync with the target branch (defaults to main).
         
@@ -772,7 +906,7 @@ class AgentTools:
                 "error": str(e)
             }
     
-    def sync_with_main(self) -> Dict[str, Any]:
+    async def sync_with_main(self) -> Dict[str, Any]:
         """
         Sync the current branch with the target branch by merging target changes.
         
@@ -809,13 +943,14 @@ class AgentTools:
             }
 
 
-    def merge_changes(self) -> Dict[str, Any]:
+    async def merge_changes(self) -> Dict[str, Any]:
         """
         Merge the current branch changes to the main branch.
-        This will merge all committed changes from the current branch into main.
+        This will first commit any pending changes on the current branch, 
+        then merge all committed changes from the current branch into main.
         
         Returns:
-            Dictionary with merge result information
+            Dictionary with merge result information including commit ID
         """
         try:
             # Cannot merge main to itself
@@ -825,7 +960,19 @@ class AgentTools:
                     "error": "Cannot merge main branch to itself"
                 }
             
-            # Use GitService to merge branch to main
+            # First, auto-commit any pending changes on the current branch
+            commit_result = self._auto_commit(
+                message=f"Prepare branch '{self.branch}' for merge to main"
+            )
+            
+            if not commit_result.success:
+                return {
+                    "success": False,
+                    "error": f"Failed to commit pending changes before merge: {commit_result.error}",
+                    "commit_details": commit_result
+                }
+            
+            # Now merge the committed changes to main
             merge_result = GitService.merge_branch(
                 project_id=self.project_id,
                 source_branch=self.branch,
@@ -836,15 +983,17 @@ class AgentTools:
                 return {
                     "success": False,
                     "error": f"Failed to merge to main: {merge_result.get('error', 'Unknown error')}",
-                    "details": merge_result
+                    "details": merge_result,
+                    "commit_id": commit_result.commit_id  # Still return the commit that was made
                 }
-            
             
             return {
                 "success": True,
-                "message": f"Successfully merged branch '{self.branch}' to main",
+                "message": f"Successfully committed changes and merged branch '{self.branch}' to main",
                 "source_branch": self.branch,
-                "target_branch": "main"
+                "target_branch": "main",
+                "commit_id": commit_result.commit_id,
+                "merge_details": merge_result
             }
             
         except Exception as e:
@@ -854,7 +1003,7 @@ class AgentTools:
                 "error": str(e)
             }
         
-    def tf_plan(self, workspace: Optional[str] = None) -> Dict[str, Any]:
+    async def tf_plan(self, workspace: Optional[str] = None) -> Dict[str, Any]:
         """
         Run terraform plan in the current branch to preview infrastructure changes.
         
@@ -877,7 +1026,7 @@ class AgentTools:
             
             try:
                 # Run terraform plan using TofuService
-                plan_result = TofuService.run_plan(
+                plan_result = await TofuService.run_plan(
                     project_id=self.project_id,
                     workspace=workspace
                 )
@@ -1010,3 +1159,17 @@ class AgentTools:
                 success=False,
                 error=str(e)
             ) # type: ignore
+        
+
+
+
+
+
+
+
+
+
+
+
+# Add registry methods to AgentTools class
+AgentTools._add_registry_methods()
