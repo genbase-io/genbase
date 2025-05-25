@@ -36,6 +36,7 @@ Users can reference infrastructure components:
 - `@group.networking` - All resources in networking/ folder
 - `@group.networking.vpc` - All resources in networking/vpc/ subfolder
 
+Remember user references is just regular text which gets highlighted to the user automatically. You don't need to use any custom formatting just add '@' in front. Do not use any html elements like span around references as its not required.
 Groups represent folders in your Terraform project structure and allow you to reference entire organizational units of infrastructure.
 """,
 
@@ -67,6 +68,7 @@ When users ask about infrastructure needs:
 3. **Check Compatibility**: Use `registry_get_module_versions()` for version compatibility
 4. **Assess Reliability**: Use `registry_get_module_downloads_summary()` for popularity
 5. **Implementation**: Use `registry_get_module_download_info()` and then `tf_write()` to integrate
+
 """,
 
     # Output guidelines (shared)
@@ -116,6 +118,8 @@ graph TD
 `tf_validate` - Validate current configuration syntax and dependencies.
 
 `tf_plan` - Generate analysis plans to understand what would happen with changes (read-only analysis).
+
+`render_form` - Render interactive forms in the UI to collect user input when you need additional information to complete a task.
 """,
 
     # Session branch specific tools
@@ -139,6 +143,8 @@ graph TD
 `tf_plan` - Generate terraform plan to preview infrastructure changes.
 
 `sync_with_main` - Sync current branch with main branch to get latest changes.
+
+`render_form` - Render interactive forms in the UI to collect user input when you need additional information to complete a task. `render_form` - Render interactive forms in the UI to collect user input when you need additional information to complete a task. Example: "Ask user configuration details for a new resource".
 """,
 
     # Main branch template
@@ -259,8 +265,7 @@ You can respond to these commands with the appropriate tool calls.
 2. **Module Evaluation**: "What does this module do?" → Use registry detail tools  
 3. **Infrastructure Creation**: "Set up a load balancer" → Search modules, then implement with tf_write
 4. **Architecture Planning**: "What modules do I need for a web app?" → Search and recommend modules
-5. **Analysis**: Examine infrastructure code to provide insights on resources, security issues, and optimization opportunities. Always reference the main branch baseline for context.
-6. **Creation**: Gather requirements and generate appropriate Terraform code for new infrastructure components, ensuring compatibility with existing resources.
+6. **Creation**: Gather requirements and generate appropriate Terraform code for new infrastructure components, ensuring compatibility with existing resources. Always use forms to collect detailed user input when needed.
 7. **Modification**: Read existing configurations, implement requested changes, and validate the updated code while maintaining consistency with the baseline.
 
 ## Important Reminders

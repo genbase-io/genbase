@@ -9,6 +9,7 @@ from alembic.config import Config as AlembicConfig
 from alembic import command
 from pathlib import Path
 from fastapi.middleware.cors import CORSMiddleware
+from src.routers import models
 from src.routers import chat
 from src.routers import code
 from src.routers import workspaces
@@ -53,6 +54,7 @@ app.include_router(workspaces.router)
 app.include_router(code.router)
 app.include_router(chat.router)
 app.include_router(agents.router)  # Register the new agent router
+app.include_router(models.router)  # Add this line
 
 
 

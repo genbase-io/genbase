@@ -1,4 +1,4 @@
-// hierarchy-utils.ts - Enhanced to handle comparison mode with deleted blocks
+// hierarchy-utils.ts - Enhanced with group labels and mention support
 import { Node } from 'reactflow';
 import { CodeBlock } from '@/lib/api';
 
@@ -11,6 +11,14 @@ export interface CodeNodeData {
   groupPath: string;
   fileName: string;
   fullPath: string;
+}
+
+export interface GroupNodeData {
+  label: string;
+  name: string;
+  fullPath: string;
+  groupPath: string;
+  isGroup: true;
 }
 
 export interface FileGroup {
@@ -40,69 +48,6 @@ export const LAYOUT = {
   TITLE_HEIGHT: 50,            
   INITIAL_X: 80,               
   INITIAL_Y: 80                
-};
-
-// Create hierarchical structure from file paths - ENHANCED FOR COMPARISON
-export const buildHierarchy = (fileGroups: FileGroup[]): HierarchyNode => {
-  const root: HierarchyNode = {
-    name: 'root',
-    fullPath: '',
-    children: new Map(),
-    blocks: [],
-    isFile: false
-  };
-
-  // Separate root blocks from grouped blocks
-  const rootBlocks: CodeBlock[] = [];
-  const groupedBlocks = new Map<string, CodeBlock[]>();
-
-  fileGroups.forEach(({ path, blocks }) => {
-    if (path === '') {
-      // These are root level blocks
-      rootBlocks.push(...blocks);
-    } else {
-      // These are grouped blocks
-      if (!groupedBlocks.has(path)) {
-        groupedBlocks.set(path, []);
-      }
-      groupedBlocks.get(path)!.push(...blocks);
-    }
-  });
-
-  // Add root blocks directly to root
-  root.blocks = rootBlocks;
-
-  // Create group nodes for non-root paths
-  groupedBlocks.forEach((blocks, path) => {
-    const parts = path.split('/').filter(part => part.length > 0); // Filter empty parts
-    let current = root;
-
-    // Navigate through the hierarchy, creating nodes as needed
-    for (let i = 0; i < parts.length; i++) {
-      const part = parts[i];
-      const isLastPart = i === parts.length - 1;
-      const currentPath = parts.slice(0, i + 1).join('/');
-      
-      if (!current.children.has(part)) {
-        current.children.set(part, {
-          name: part,
-          fullPath: currentPath,
-          children: new Map(),
-          blocks: [],
-          isFile: false
-        });
-      }
-      
-      current = current.children.get(part)!;
-      
-      // If this is the last part, add all blocks for this group
-      if (isLastPart) {
-        current.blocks = blocks;
-      }
-    }
-  });
-
-  return root;
 };
 
 // Calculate content size for blocks in a grid
@@ -263,12 +208,21 @@ export const calculateLayout = (hierarchy: HierarchyNode): { nodes: Node[] } => 
     const nodeId = generateId();
     const size = calculateGroupSize(node);
 
+    // Create group node with enhanced data for mentions
+    const groupData: GroupNodeData = {
+      label: node.name, // Just the last segment name
+      name: node.name,
+      fullPath: node.fullPath,
+      groupPath: node.fullPath, // Full path for mentions
+      isGroup: true
+    };
+
     // Create group node with proper configuration
     nodes.push({
       id: nodeId,
       type: 'group',
       position,
-      data: { label: `📁 ${node.name}` },
+      data: groupData,
       style: {
         width: size.width,
         height: size.height,
@@ -315,17 +269,93 @@ export const calculateLayout = (hierarchy: HierarchyNode): { nodes: Node[] } => 
   return { nodes };
 };
 
-// Helper function to merge blocks from different sources for comparison
+export const buildHierarchy = (fileGroups: FileGroup[]): HierarchyNode => {
+  const root: HierarchyNode = {
+    name: 'root',
+    fullPath: '',
+    children: new Map(),
+    blocks: [],
+    isFile: false
+  };
+
+  // Separate root blocks from grouped blocks
+  const rootBlocks: CodeBlock[] = [];
+  const groupedBlocks = new Map<string, CodeBlock[]>();
+
+  fileGroups.forEach(({ path, blocks }) => {
+    // Filter out terraform blocks from display
+    const filteredBlocks = blocks.filter(block => 
+      block._metadata.block_type !== 'terraform'
+    );
+    
+    if (path === '') {
+      // These are root level blocks
+      rootBlocks.push(...filteredBlocks);
+    } else {
+      // These are grouped blocks
+      if (!groupedBlocks.has(path)) {
+        groupedBlocks.set(path, []);
+      }
+      groupedBlocks.get(path)!.push(...filteredBlocks);
+    }
+  });
+
+  // Add root blocks directly to root
+  root.blocks = rootBlocks;
+
+  // Create group nodes for non-root paths
+  groupedBlocks.forEach((blocks, path) => {
+    const parts = path.split('/').filter(part => part.length > 0); // Filter empty parts
+    let current = root;
+
+    // Navigate through the hierarchy, creating nodes as needed
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i];
+      const isLastPart = i === parts.length - 1;
+      const currentPath = parts.slice(0, i + 1).join('/');
+      
+      if (!current.children.has(part)) {
+        current.children.set(part, {
+          name: part,
+          fullPath: currentPath,
+          children: new Map(),
+          blocks: [],
+          isFile: false
+        });
+      }
+      
+      current = current.children.get(part)!;
+      
+      // If this is the last part, add all blocks for this group
+      if (isLastPart) {
+        current.blocks = blocks;
+      }
+    }
+  });
+
+  return root;
+};
+
+// Update the mergeBlocksForComparison function to also filter terraform blocks
 export const mergeBlocksForComparison = (
   compareBlocks: CodeBlock[],
   deletedBlocks: CodeBlock[]
 ): CodeBlock[] => {
-  const allBlocks = [...compareBlocks];
+  // Filter out terraform blocks from both arrays
+  const filteredCompareBlocks = compareBlocks.filter(block => 
+    block._metadata.block_type !== 'terraform'
+  );
+  
+  const filteredDeletedBlocks = deletedBlocks.filter(block => 
+    block._metadata.block_type !== 'terraform'
+  );
+  
+  const allBlocks = [...filteredCompareBlocks];
   
   // Add deleted blocks with special marking
-  deletedBlocks.forEach(deletedBlock => {
+  filteredDeletedBlocks.forEach(deletedBlock => {
     // Check if this block already exists in compareBlocks
-    const existsInCompare = compareBlocks.some(block => 
+    const existsInCompare = filteredCompareBlocks.some(block => 
       (block.address || `${block._metadata.block_type}.${block.name}`) === 
       (deletedBlock.address || `${deletedBlock._metadata.block_type}.${deletedBlock.name}`)
     );
@@ -342,23 +372,25 @@ export const mergeBlocksForComparison = (
   return allBlocks;
 };
 
-// Helper function to sort blocks for consistent layout
+// Update sortBlocksForLayout to exclude terraform and fix the ordering
 export const sortBlocksForLayout = (blocks: CodeBlock[]): CodeBlock[] => {
-  return blocks.sort((a, b) => {
-    // Sort by block type first
-    const typeOrder = ['provider', 'terraform', 'variable', 'locals', 'data', 'resource', 'module', 'output'];
-    const aTypeIndex = typeOrder.indexOf(a._metadata.block_type);
-    const bTypeIndex = typeOrder.indexOf(b._metadata.block_type);
-    
-    if (aTypeIndex !== bTypeIndex) {
-      return aTypeIndex - bTypeIndex;
-    }
-    
-    // Then sort by name
-    const aName = a.name || '';
-    const bName = b.name || '';
-    return aName.localeCompare(bName);
-  });
+  return blocks
+    .filter(block => block._metadata.block_type !== 'terraform') // Filter out terraform blocks
+    .sort((a, b) => {
+      // Sort by block type first
+      const typeOrder = ['provider', 'variable', 'locals', 'data', 'resource', 'module', 'output'];
+      const aTypeIndex = typeOrder.indexOf(a._metadata.block_type);
+      const bTypeIndex = typeOrder.indexOf(b._metadata.block_type);
+      
+      if (aTypeIndex !== bTypeIndex) {
+        return aTypeIndex - bTypeIndex;
+      }
+      
+      // Then sort by name
+      const aName = a.name || '';
+      const bName = b.name || '';
+      return aName.localeCompare(bName);
+    });
 };
 
 // Export enhanced hierarchy utilities

@@ -4,6 +4,7 @@ Updated ChatService with native worktree integration
 import json
 from datetime import datetime
 from typing import List, Dict, Any, Optional
+from litellm import Message
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, asc
 
@@ -326,6 +327,7 @@ class ChatService:
                 "error": str(e)
             }
     
+    # TODO: Make sure tool results has a corresponding tool call ID in the last assistant message containing tool calls and that the tool call ID is unique
     @staticmethod
     def add_tool_result(
         project_id: str, 
@@ -334,7 +336,7 @@ class ChatService:
         name: str,
         content: str,
         commit_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
+    ) -> tuple[Dict[str, Any], Message]:
         """
         Add a tool result message to a chat session
         
@@ -349,7 +351,7 @@ class ChatService:
             Dictionary with message information
         """
         try:
-            return ChatService._add_message(
+            add_message_response =  ChatService._add_message(
                 project_id=project_id,
                 session_id=session_id,
                 role="tool",
@@ -358,13 +360,22 @@ class ChatService:
                 name=name,
                 commit_id=commit_id
             )
+
+
+            return add_message_response, Message(
+                role="tool", # type: ignore
+                content=content,
+                name=name,
+                tool_call_id=tool_call_id,
+            )
+        
             
         except Exception as e:
             logger.error(f"Error adding tool result: {str(e)}")
             return {
                 "success": False,
                 "error": str(e)
-            }
+            }, Message()
     
     @staticmethod
     def _add_message(

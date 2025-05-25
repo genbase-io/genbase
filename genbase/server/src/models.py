@@ -34,7 +34,7 @@ class ChatMessage(Base):
     
     # Tool-related fields (JSON format)
     tool_calls = Column(JSON, nullable=True)  # For assistant messages with tool calls
-    tool_call_id = Column(String, nullable=True)  # For tool response messages
+    tool_call_id = Column(String, nullable=True, unique=True)# For tool response messages
     name = Column(String, nullable=True)  # Tool name for tool messages
     
     # Additional LiteLLM fields

@@ -1,4 +1,4 @@
-// node-details-panel-with-comparison.tsx - Enhanced node details panel with comparison
+// node-details-panel-with-comparison.tsx - Fixed with proper internal scrolling
 import React, { useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -87,7 +87,7 @@ const ConfigChangeRow: React.FC<{
 }> = ({ configKey, change }) => {
   const renderValue = (value: any, isOld = false) => {
     if (value === null || value === undefined) {
-      return <span className="text-muted-foreground italic">null</span>;
+      return <span className="text-muted-foreground italic text-xs">null</span>;
     }
     
     if (typeof value === 'boolean') {
@@ -100,20 +100,20 @@ const ConfigChangeRow: React.FC<{
     
     if (typeof value === 'object') {
       const jsonStr = JSON.stringify(value);
-      const truncated = jsonStr.length > 50 ? jsonStr.substring(0, 50) + '...' : jsonStr;
+      const truncated = jsonStr.length > 30 ? jsonStr.substring(0, 30) + '...' : jsonStr;
       return (
-        <span className="font-mono text-xs text-muted-foreground" title={jsonStr}>
+        <span className="font-mono text-xs text-muted-foreground break-words" title={jsonStr}>
           {truncated}
         </span>
       );
     }
     
     const strValue = String(value);
-    const displayValue = strValue.length > 50 ? strValue.substring(0, 50) + '...' : strValue;
+    const displayValue = strValue.length > 35 ? strValue.substring(0, 35) + '...' : strValue;
     
     return (
       <span 
-        className={`text-sm ${isOld ? 'line-through text-red-600' : ''}`} 
+        className={`text-xs break-words ${isOld ? 'line-through text-red-600' : ''}`} 
         title={strValue}
       >
         {displayValue}
@@ -123,45 +123,47 @@ const ConfigChangeRow: React.FC<{
 
   return (
     <TableRow>
-      <TableCell className="font-medium py-2 align-top">
-        <div className="flex items-center space-x-2">
-          {change.type === 'added' && <Plus className="h-3 w-3 text-green-600" />}
-          {change.type === 'removed' && <Minus className="h-3 w-3 text-red-600" />}
-          {change.type === 'modified' && <GitCompare className="h-3 w-3 text-yellow-600" />}
-          <span className="text-sm">{configKey}</span>
+      <TableCell className="font-medium py-2 align-top w-24">
+        <div className="flex items-center space-x-1">
+          {change.type === 'added' && <Plus className="h-3 w-3 text-green-600 flex-shrink-0" />}
+          {change.type === 'removed' && <Minus className="h-3 w-3 text-red-600 flex-shrink-0" />}
+          {change.type === 'modified' && <GitCompare className="h-3 w-3 text-yellow-600 flex-shrink-0" />}
+          <span className="text-xs break-words">{configKey}</span>
         </div>
       </TableCell>
       <TableCell className="py-2 align-top">
-        {change.type === 'added' && (
-          <div className="flex items-center space-x-2">
-            <Plus className="h-3 w-3 text-green-600" />
-            {renderValue(change.new)}
-          </div>
-        )}
-        {change.type === 'removed' && (
-          <div className="flex items-center space-x-2">
-            <Minus className="h-3 w-3 text-red-600" />
-            {renderValue(change.old, true)}
-          </div>
-        )}
-        {change.type === 'modified' && (
-          <div className="space-y-1">
-            <div className="flex items-center space-x-2">
-              <Minus className="h-3 w-3 text-red-600" />
-              {renderValue(change.old, true)}
+        <div className="max-w-48">
+          {change.type === 'added' && (
+            <div className="flex items-start space-x-1">
+              <Plus className="h-3 w-3 text-green-600 flex-shrink-0 mt-0.5" />
+              <div className="min-w-0">{renderValue(change.new)}</div>
             </div>
-            <div className="flex items-center space-x-2">
-              <Plus className="h-3 w-3 text-green-600" />
-              {renderValue(change.new)}
+          )}
+          {change.type === 'removed' && (
+            <div className="flex items-start space-x-1">
+              <Minus className="h-3 w-3 text-red-600 flex-shrink-0 mt-0.5" />
+              <div className="min-w-0">{renderValue(change.old, true)}</div>
             </div>
-          </div>
-        )}
+          )}
+          {change.type === 'modified' && (
+            <div className="space-y-1">
+              <div className="flex items-start space-x-1">
+                <Minus className="h-3 w-3 text-red-600 flex-shrink-0 mt-0.5" />
+                <div className="min-w-0">{renderValue(change.old, true)}</div>
+              </div>
+              <div className="flex items-start space-x-1">
+                <Plus className="h-3 w-3 text-green-600 flex-shrink-0 mt-0.5" />
+                <div className="min-w-0">{renderValue(change.new)}</div>
+              </div>
+            </div>
+          )}
+        </div>
       </TableCell>
-      <TableCell className="py-2 align-top">
+      <TableCell className="py-2 align-top w-8">
         <Button
           variant="ghost"
           size="icon"
-          className="h-6 w-6"
+          className="h-5 w-5"
           onClick={() => {
             const valueToCopy = change.type === 'removed' ? change.old : change.new;
             navigator.clipboard.writeText(
@@ -218,7 +220,7 @@ const NodeDetailsPanelWithComparison: React.FC<NodeDetailsPanelWithComparisonPro
   
   const formatValue = (value: any) => {
     if (value === null || value === undefined) {
-      return <span className="text-muted-foreground italic">null</span>;
+      return <span className="text-muted-foreground italic text-xs">null</span>;
     }
     
     if (typeof value === 'boolean') {
@@ -231,9 +233,9 @@ const NodeDetailsPanelWithComparison: React.FC<NodeDetailsPanelWithComparisonPro
     
     if (typeof value === 'object') {
       const jsonStr = JSON.stringify(value);
-      const truncated = jsonStr.length > 100 ? jsonStr.substring(0, 100) + '...' : jsonStr;
+      const truncated = jsonStr.length > 60 ? jsonStr.substring(0, 60) + '...' : jsonStr;
       return (
-        <span className="font-mono text-xs text-muted-foreground" title={jsonStr}>
+        <span className="font-mono text-xs text-muted-foreground break-words" title={jsonStr}>
           {truncated}
         </span>
       );
@@ -241,8 +243,8 @@ const NodeDetailsPanelWithComparison: React.FC<NodeDetailsPanelWithComparisonPro
     
     const strValue = String(value);
     return (
-      <span className="text-sm" title={strValue}>
-        {strValue.length > 50 ? strValue.substring(0, 50) + '...' : strValue}
+      <span className="text-xs break-words" title={strValue}>
+        {strValue.length > 40 ? strValue.substring(0, 40) + '...' : strValue}
       </span>
     );
   };
@@ -280,8 +282,8 @@ const NodeDetailsPanelWithComparison: React.FC<NodeDetailsPanelWithComparisonPro
   const configEntries = Object.entries(selectedNodeData.config);
   
   return (
-    <div className="w-96 h-screen flex flex-col border-l border-border bg-background overflow-hidden">
-      {/* Fixed Header */}
+    <div className="w-96 h-full flex flex-col border-l border-border bg-background">
+      {/* Fixed Header - no longer full screen height issues */}
       <div className={`border-l-4 p-4 bg-card flex-shrink-0`} style={{ borderLeftColor: colors.border.replace('border-', '') }}>
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center space-x-2 min-w-0 flex-1">
@@ -328,289 +330,249 @@ const NodeDetailsPanelWithComparison: React.FC<NodeDetailsPanelWithComparisonPro
         </div>
       </div>
       
-      {/* Scrollable Content */}
-      <ScrollArea className="flex-1">
-        <div className="p-4 space-y-6 pb-20">
-          
-          {/* Basic Information */}
-          {/* <section>
-            <h3 className="text-sm font-medium mb-3 flex items-center">
-              <FileText className="h-4 w-4 mr-2" />
-              Information
-            </h3>
-            <Table>
-              <TableBody>
-                <TableRow>
-                  <TableCell className="font-medium w-1/3 py-2">File</TableCell>
-                  <TableCell className="py-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm">{selectedNodeData.fileName}</span>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-6 w-6"
-                        onClick={() => copyToClipboard(selectedNodeData.fileName, 'File name')}
-                      >
-                        <Copy className="h-3 w-3" />
-                      </Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-                {selectedNodeData.groupPath && (
-                  <TableRow>
-                    <TableCell className="font-medium w-1/3 py-2">Path</TableCell>
-                    <TableCell className="py-2">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center space-x-1">
-                          <FolderOpen className="h-3 w-3 text-muted-foreground" />
-                          <span className="text-sm">{selectedNodeData.groupPath}</span>
-                        </div>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-6 w-6"
-                          onClick={() => copyToClipboard(selectedNodeData.groupPath, 'Group path')}
-                        >
-                          <Copy className="h-3 w-3" />
-                        </Button>
+      {/* Scrollable Content - Now properly contained */}
+      <div className="flex-1 overflow-hidden">
+        <ScrollArea className="h-full">
+          <div className="p-4 space-y-6">
+            {/* Dependencies */}
+            {totalDependencies > 0 && (
+              <section>
+                <h3 className="text-sm font-medium mb-3 flex items-center">
+                  <GitBranch className="h-4 w-4 mr-2" />
+                  Dependencies
+                  <Badge variant="outline" className="ml-2 text-xs">
+                    {totalDependencies}
+                  </Badge>
+                </h3>
+                
+                {/* Dependency changes */}
+                {nodeComparison?.dependencyChanges && (
+                  <div className="mb-4 p-3 bg-amber-50 rounded-md border">
+                    <h4 className="text-xs font-medium text-amber-800 mb-2">Dependency Changes</h4>
+                    {nodeComparison.dependencyChanges.added.length > 0 && (
+                      <div className="mb-2">
+                        <span className="text-xs text-green-600 font-medium">
+                          +{nodeComparison.dependencyChanges.added.length} Added:
+                        </span>
+                        {nodeComparison.dependencyChanges.added.map((dep, idx) => (
+                          <div key={idx} className="text-xs text-green-700 ml-2">
+                            {dep.from} → {dep.to}
+                          </div>
+                        ))}
                       </div>
-                    </TableCell>
-                  </TableRow>
+                    )}
+                    {nodeComparison.dependencyChanges.removed.length > 0 && (
+                      <div>
+                        <span className="text-xs text-red-600 font-medium">
+                          -{nodeComparison.dependencyChanges.removed.length} Removed:
+                        </span>
+                        {nodeComparison.dependencyChanges.removed.map((dep, idx) => (
+                          <div key={idx} className="text-xs text-red-700 ml-2 line-through">
+                            {dep.from} → {dep.to}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 )}
-               
-              </TableBody>
-            </Table>
-          </section> */}
-
-          {/* Dependencies */}
-          {totalDependencies > 0 && (
-            <section>
-              <h3 className="text-sm font-medium mb-3 flex items-center">
-                <GitBranch className="h-4 w-4 mr-2" />
-                Dependencies
-                <Badge variant="outline" className="ml-2 text-xs">
-                  {totalDependencies}
-                </Badge>
-              </h3>
-              
-              {/* Dependency changes */}
-              {nodeComparison?.dependencyChanges && (
-                <div className="mb-4 p-3 bg-amber-50 rounded-md border">
-                  <h4 className="text-xs font-medium text-amber-800 mb-2">Dependency Changes</h4>
-                  {nodeComparison.dependencyChanges.added.length > 0 && (
-                    <div className="mb-2">
-                      <span className="text-xs text-green-600 font-medium">
-                        +{nodeComparison.dependencyChanges.added.length} Added:
-                      </span>
-                      {nodeComparison.dependencyChanges.added.map((dep, idx) => (
-                        <div key={idx} className="text-xs text-green-700 ml-2">
-                          {dep.from} → {dep.to}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  {nodeComparison.dependencyChanges.removed.length > 0 && (
-                    <div>
-                      <span className="text-xs text-red-600 font-medium">
-                        -{nodeComparison.dependencyChanges.removed.length} Removed:
-                      </span>
-                      {nodeComparison.dependencyChanges.removed.map((dep, idx) => (
-                        <div key={idx} className="text-xs text-red-700 ml-2 line-through">
-                          {dep.from} → {dep.to}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-              
-              {incoming.length > 0 && (
-                <div className="mb-4">
-                  <h4 className="text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wide">
-                    Depends on ({incoming.length})
-                  </h4>
-                  <div className="space-y-1">
-                    {incoming.map((dep, index) => {
-                      const nodeData = dep.sourceNode;
-                      const isClickable = !!nodeData;
-                      
-                      return (
-                        <div key={index} className="flex items-center justify-between p-2 bg-muted/30 rounded text-sm">
-                          <div className="flex items-center space-x-2 min-w-0 flex-1">
-                            <ArrowRight className="h-3 w-3 text-muted-foreground flex-shrink-0" />
-                            <div className="min-w-0 flex-1">
-                              {isClickable ? (
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => focusOnNode(dep.from)}
-                                  className="text-sm font-medium p-0 h-auto hover:text-primary"
-                                >
-                                  {nodeData.label || dep.from}
-                                  <ExternalLink className="h-3 w-3 ml-1" />
-                                </Button>
-                              ) : (
-                                <span className="text-sm font-medium truncate">{dep.from}</span>
-                              )}
-                              {dep.label && (
-                                <p className="text-xs text-muted-foreground">via {dep.label}</p>
-                              )}
+                
+                {incoming.length > 0 && (
+                  <div className="mb-4">
+                    <h4 className="text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wide">
+                      Depends on ({incoming.length})
+                    </h4>
+                    <div className="space-y-1">
+                      {incoming.map((dep, index) => {
+                        const nodeData = dep.sourceNode;
+                        const isClickable = !!nodeData;
+                        
+                        return (
+                          <div key={index} className="flex items-center justify-between p-2 bg-muted/30 rounded text-sm">
+                            <div className="flex items-center space-x-2 min-w-0 flex-1">
+                              <ArrowRight className="h-3 w-3 text-muted-foreground flex-shrink-0" />
+                              <div className="min-w-0 flex-1">
+                                {isClickable ? (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => focusOnNode(dep.from)}
+                                    className="text-xs font-medium p-0 h-auto hover:text-primary max-w-full text-left"
+                                  >
+                                    <span className="truncate block max-w-32">
+                                      {nodeData.label || dep.from}
+                                    </span>
+                                    <ExternalLink className="h-3 w-3 ml-1 flex-shrink-0" />
+                                  </Button>
+                                ) : (
+                                  <span className="text-xs font-medium truncate block max-w-32">{dep.from}</span>
+                                )}
+                                {dep.label && (
+                                  <p className="text-xs text-muted-foreground truncate max-w-32">via {dep.label}</p>
+                                )}
+                              </div>
                             </div>
+                            <Badge className={`text-xs ${getTypeColor(dep.type)} flex-shrink-0 ml-1`}>
+                              {dep.type.replace(/_/g, ' ').substring(0, 8)}
+                            </Badge>
                           </div>
-                          <Badge className={`text-xs ${getTypeColor(dep.type)}`}>
-                            {dep.type.replace(/_/g, ' ')}
-                          </Badge>
-                        </div>
-                      );
-                    })}
+                        );
+                      })}
+                    </div>
                   </div>
-                </div>
-              )}
-              
-              {outgoing.length > 0 && (
-                <div>
-                  <h4 className="text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wide">
-                    Referenced by ({outgoing.length})
-                  </h4>
-                  <div className="space-y-1">
-                    {outgoing.map((dep, index) => {
-                      const nodeData = dep.targetNode;
-                      const isClickable = !!nodeData;
-                      
-                      return (
-                        <div key={index} className="flex items-center justify-between p-2 bg-muted/30 rounded text-sm">
-                          <div className="flex items-center space-x-2 min-w-0 flex-1">
-                            <ArrowLeft className="h-3 w-3 text-muted-foreground flex-shrink-0" />
-                            <div className="min-w-0 flex-1">
-                              {isClickable ? (
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => focusOnNode(dep.to)}
-                                  className="text-sm font-medium p-0 h-auto hover:text-primary"
-                                >
-                                  {nodeData.label || dep.to}
-                                  <ExternalLink className="h-3 w-3 ml-1" />
-                                </Button>
-                              ) : (
-                                <span className="text-sm font-medium truncate">{dep.to}</span>
-                              )}
-                              {dep.label && (
-                                <p className="text-xs text-muted-foreground">via {dep.label}</p>
-                              )}
+                )}
+                
+                {outgoing.length > 0 && (
+                  <div>
+                    <h4 className="text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wide">
+                      Referenced by ({outgoing.length})
+                    </h4>
+                    <div className="space-y-1">
+                      {outgoing.map((dep, index) => {
+                        const nodeData = dep.targetNode;
+                        const isClickable = !!nodeData;
+                        
+                        return (
+                          <div key={index} className="flex items-center justify-between p-2 bg-muted/30 rounded text-sm">
+                            <div className="flex items-center space-x-2 min-w-0 flex-1">
+                              <ArrowLeft className="h-3 w-3 text-muted-foreground flex-shrink-0" />
+                              <div className="min-w-0 flex-1">
+                                {isClickable ? (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => focusOnNode(dep.to)}
+                                    className="text-xs font-medium p-0 h-auto hover:text-primary max-w-full text-left"
+                                  >
+                                    <span className="truncate block max-w-32">
+                                      {nodeData.label || dep.to}
+                                    </span>
+                                    <ExternalLink className="h-3 w-3 ml-1 flex-shrink-0" />
+                                  </Button>
+                                ) : (
+                                  <span className="text-xs font-medium truncate block max-w-32">{dep.to}</span>
+                                )}
+                                {dep.label && (
+                                  <p className="text-xs text-muted-foreground truncate max-w-32">via {dep.label}</p>
+                                )}
+                              </div>
                             </div>
+                            <Badge className={`text-xs ${getTypeColor(dep.type)} flex-shrink-0 ml-1`}>
+                              {dep.type.replace(/_/g, ' ').substring(0, 8)}
+                            </Badge>
                           </div>
-                          <Badge className={`text-xs ${getTypeColor(dep.type)}`}>
-                            {dep.type.replace(/_/g, ' ')}
-                          </Badge>
-                        </div>
-                      );
-                    })}
+                        );
+                      })}
+                    </div>
                   </div>
-                </div>
-              )}
-            </section>
-          )}
+                )}
+              </section>
+            )}
 
-          {/* Configuration Changes (if comparing) */}
-          {hasChange && configChanges.length > 0 && (
+            {/* Configuration Changes (if comparing) */}
+            {hasChange && configChanges.length > 0 && (
+              <section>
+                <div className="flex justify-between items-center mb-3">
+                  <h3 className="text-sm font-medium flex items-center">
+                    <GitCompare className="h-4 w-4 mr-2" />
+                    Configuration Changes
+                    <Badge variant="outline" className="ml-2 text-xs">
+                      {configChanges.length} {configChanges.length === 1 ? 'change' : 'changes'}
+                    </Badge>
+                  </h3>
+                </div>
+                
+                <div className="border rounded-lg overflow-hidden">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-24 text-xs">Property</TableHead>
+                        <TableHead className="text-xs">Value</TableHead>
+                        <TableHead className="w-8"></TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {configChanges.map(({ key, change }) => (
+                        <ConfigChangeRow key={key} configKey={key} change={change} />
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </section>
+            )}
+
+            {/* Current Configuration Table */}
             <section>
               <div className="flex justify-between items-center mb-3">
                 <h3 className="text-sm font-medium flex items-center">
-                  <GitCompare className="h-4 w-4 mr-2" />
-                  Configuration Changes
+                  <Eye className="h-4 w-4 mr-2" />
+                  Current Configuration
                   <Badge variant="outline" className="ml-2 text-xs">
-                    {configChanges.length} {configChanges.length === 1 ? 'change' : 'changes'}
+                    {configEntries.length} {configEntries.length === 1 ? 'property' : 'properties'}
                   </Badge>
                 </h3>
+                {configEntries.length > 0 && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => copyToClipboard(JSON.stringify(selectedNodeData.config, null, 2), 'Configuration')}
+                    className="text-xs h-6 px-2"
+                  >
+                    <Copy className="h-3 w-3 mr-1" />
+                    Copy All
+                  </Button>
+                )}
               </div>
               
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-1/3">Property</TableHead>
-                    <TableHead>Value</TableHead>
-                    <TableHead className="w-12"></TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {configChanges.map(({ key, change }) => (
-                    <ConfigChangeRow key={key} configKey={key} change={change} />
-                  ))}
-                </TableBody>
-              </Table>
-            </section>
-          )}
-
-          {/* Current Configuration Table */}
-          <section>
-            <div className="flex justify-between items-center mb-3">
-              <h3 className="text-sm font-medium flex items-center">
-                <Eye className="h-4 w-4 mr-2" />
-                Current Configuration
-                <Badge variant="outline" className="ml-2 text-xs">
-                  {configEntries.length} {configEntries.length === 1 ? 'property' : 'properties'}
-                </Badge>
-              </h3>
-              {configEntries.length > 0 && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => copyToClipboard(JSON.stringify(selectedNodeData.config, null, 2), 'Configuration')}
-                  className="text-xs h-7"
-                >
-                  <Copy className="h-3 w-3 mr-1" />
-                  Copy All
-                </Button>
+              {configEntries.length > 0 ? (
+                <div className="border rounded-lg overflow-hidden">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-24 text-xs">Key</TableHead>
+                        <TableHead className="text-xs">Value</TableHead>
+                        <TableHead className="w-8"></TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {configEntries.map(([key, value]) => (
+                        <TableRow key={key}>
+                          <TableCell className="font-medium py-2 align-top w-24">
+                            <span className="text-xs break-words">{key}</span>
+                          </TableCell>
+                          <TableCell className="py-2 align-top">
+                            <div className="text-xs max-w-48 break-words">
+                              {formatValue(value)}
+                            </div>
+                          </TableCell>
+                          <TableCell className="py-2 align-top w-8">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-5 w-5"
+                              onClick={() => copyToClipboard(
+                                typeof value === 'object' 
+                                  ? JSON.stringify(value, null, 2) 
+                                  : String(value), 
+                                key
+                              )}
+                            >
+                              <Copy className="h-3 w-3" />
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground italic text-center py-8 border rounded-lg bg-muted/20">
+                  No configuration properties available
+                </p>
               )}
-            </div>
-            
-            {configEntries.length > 0 ? (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-1/3">Key</TableHead>
-                    <TableHead>Value</TableHead>
-                    <TableHead className="w-12"></TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {configEntries.map(([key, value]) => (
-                    <TableRow key={key}>
-                      <TableCell className="font-medium py-2 align-top">
-                        <span className="text-sm">{key}</span>
-                      </TableCell>
-                      <TableCell className="py-2 align-top">
-                        {formatValue(value)}
-                      </TableCell>
-                      <TableCell className="py-2 align-top">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-6 w-6"
-                          onClick={() => copyToClipboard(
-                            typeof value === 'object' 
-                              ? JSON.stringify(value, null, 2) 
-                              : String(value), 
-                            key
-                          )}
-                        >
-                          <Copy className="h-3 w-3" />
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            ) : (
-              <p className="text-sm text-muted-foreground italic text-center py-4">
-                No configuration properties available
-              </p>
-            )}
-          </section>
-
-        </div>
-      </ScrollArea>
+            </section>
+          </div>
+        </ScrollArea>
+      </div>
     </div>
   );
 };

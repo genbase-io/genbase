@@ -220,7 +220,6 @@ class RegistryTools:
         namespace: str,
         name: str,
         provider: str,
-        limit_versions: int = 5
     ) -> Dict[str, Any]:
         """
         Get available versions for a specific module.
@@ -232,7 +231,6 @@ class RegistryTools:
             namespace: Module namespace/owner (e.g., "hashicorp")
             name: Module name (e.g., "consul")
             provider: Provider name (e.g., "aws")
-            limit_versions: Max versions to show (default: 5)
             
         Returns:
             Dict with success status, version list, and compatibility info
@@ -257,6 +255,8 @@ class RegistryTools:
             
             module_info = modules[0]
             versions_data = module_info.get("versions", [])
+
+            limit_versions = 5
             
             # Process versions - limit to recent ones
             processed_versions = []
@@ -304,7 +304,7 @@ class RegistryTools:
                 "success": False,
                 "error": str(e)
             }
-    
+        
     async def registry_get_module_details(
         self,
         namespace: str,
@@ -324,7 +324,7 @@ class RegistryTools:
             name: Module name (e.g., "consul")
             provider: Provider name (e.g., "aws")
             version: Specific version (if None, gets latest)
-            get_detailed_info: If True, include full inputs/outputs/resources
+            get_detailed_info: If True, include full inputs/outputs/resources in compressed text format
             
         Returns:
             Dict with module summary, usage info, and architecture details
@@ -359,65 +359,43 @@ class RegistryTools:
             outputs = root_module.get("outputs", [])
             submodules = data.get("submodules", [])
             
-            # Process inputs - show required ones, count optional
+            # Basic usage info (always included)
             required_inputs = []
-            optional_count = 0
-            
             for inp in inputs:
-                if inp.get("default") in [None, ""]:  # Required input
-                    if get_detailed_info or len(required_inputs) < 5:  # Limit unless detailed
-                        required_inputs.append({
-                            "name": inp.get("name", ""),
-                            "type": inp.get("type", "string"),
-                            "description": inp.get("description", "")[:80] + "..." if len(inp.get("description", "")) > 80 else inp.get("description", "")
-                        })
-                else:
-                    optional_count += 1
+                if not inp.get("default") or inp.get("default") in ["", '""']:
+                    required_inputs.append({
+                        "name": inp.get("name", ""),
+                        "type": inp.get("type", "string"),
+                        "description": inp.get("description", "")[:80] + "..." if len(inp.get("description", "")) > 80 else inp.get("description", "")
+                    })
             
-            # Process outputs
-            key_outputs = []
-            for out in outputs:
-                if get_detailed_info or len(key_outputs) < 5:  # Limit unless detailed
-                    key_outputs.append(out.get("name", ""))
+            key_outputs = [out.get("name", "") for out in outputs[:5]]
+            key_submodules = [sub.get("path", "").split("/")[-1] for sub in submodules[:3]]
             
-            # Process submodules and resources
-            key_submodules = []
+            # Get main resources
             main_resources = []
-            
-            for sub in submodules[:3]:  # Limit to 3 key submodules
-                key_submodules.append(sub.get("path", "").split("/")[-1])  # Just the name
-                
-                # Get resources from submodule
-                for resource in sub.get("resources", [])[:3]:  # Limit resources
+            for sub in submodules:
+                for resource in sub.get("resources", []):
                     res_type = resource.get("type", "")
                     if res_type and res_type not in main_resources:
                         main_resources.append(res_type)
             
-            # Get resources from root module too
-            for resource in root_module.get("resources", [])[:5]:
+            for resource in root_module.get("resources", []):
                 res_type = resource.get("type", "")
                 if res_type and res_type not in main_resources:
                     main_resources.append(res_type)
             
-            # README summary
-            readme = root_module.get("readme", "")
-            readme_summary = ""
-            if readme:
-                # Get first paragraph or first 200 chars
-                first_para = readme.split('\n\n')[0] if '\n\n' in readme else readme
-                readme_summary = first_para[:200] + "..." if len(first_para) > 200 else first_para
-            
             usage_info = {
                 "required_inputs": required_inputs,
-                "optional_inputs_count": optional_count,
+                "optional_inputs_count": len(inputs) - len(required_inputs),
                 "outputs_count": len(outputs),
-                "key_outputs": key_outputs[:5]  # Limit to 5 key outputs
+                "key_outputs": key_outputs
             }
             
             architecture_info = {
                 "submodules_count": len(submodules),
                 "key_submodules": key_submodules,
-                "main_resources": main_resources[:8]  # Limit to 8 main resources
+                "main_resources": main_resources[:8]
             }
             
             result = {
@@ -431,15 +409,10 @@ class RegistryTools:
                 "architecture": architecture_info
             }
             
-            # Add README summary if available
-            if readme_summary:
-                result["readme_summary"] = readme_summary
-            
-            # If detailed info requested, add full schemas
+            # Add compressed detailed info if requested
             if get_detailed_info:
-                result["detailed_inputs"] = inputs
-                result["detailed_outputs"] = outputs
-                result["detailed_submodules"] = submodules
+                detailed_text = self._format_detailed_module_info(data)
+                result["detailed_info"] = detailed_text
             
             return result
             
@@ -455,7 +428,100 @@ class RegistryTools:
                 "success": False,
                 "error": str(e)
             }
-    
+
+    def _format_detailed_module_info(self, data: Dict[str, Any]) -> str:
+        """Format module data into compressed text format"""
+        
+        root_module = data.get("root", {})
+        inputs = root_module.get("inputs", [])
+        outputs = root_module.get("outputs", [])
+        submodules = data.get("submodules", [])
+        
+        lines = []
+        
+        # Required inputs
+        required_inputs = []
+        for inp in inputs:
+            if not inp.get("default") or inp.get("default") in ["", '""']:
+                required_inputs.append(f"{inp.get('name', '')} {inp.get('type', 'string')}")
+        
+        if required_inputs:
+            lines.append("REQUIRED:")
+            lines.append(" ".join(required_inputs))
+            lines.append("")
+        
+        # Optional inputs grouped by type
+        if inputs:
+            optional_inputs = []
+            for inp in inputs:
+                if inp.get("default") and inp.get("default") not in ["", '""']:
+                    optional_inputs.append(inp)
+            
+            if optional_inputs:
+                lines.append(f"OPTIONAL {len(optional_inputs)}:")
+                
+                # Group by type
+                by_type = {}
+                for inp in optional_inputs:
+                    inp_type = inp.get("type", "string")
+                    if inp_type not in by_type:
+                        by_type[inp_type] = []
+                    
+                    name = inp.get("name", "")
+                    default = inp.get("default")
+                    
+                    # Format with default if it's not null/empty
+                    if default and default not in ["null", "\"\"", "{}", "[]"]:
+                        by_type[inp_type].append(f"{name}={default}")
+                    else:
+                        by_type[inp_type].append(name)
+                
+                # Output each type group
+                for type_name, items in by_type.items():
+                    if items:
+                        lines.append(f"{type_name.upper()}: {' '.join(items)}")
+                
+                lines.append("")
+        
+        # Outputs
+        if outputs:
+            output_names = [out.get("name", "") for out in outputs if out.get("name")]
+            lines.append(f"OUTPUTS {len(outputs)}:")
+            lines.append(" ".join(output_names))
+            lines.append("")
+        
+        # Submodules
+        if submodules:
+            submodule_names = []
+            all_resources = []
+            
+            for sub in submodules:
+                path = sub.get("path", "")
+                if path:
+                    submodule_names.append(path.split("/")[-1])
+                
+                # Collect resources from submodules
+                for resource in sub.get("resources", []):
+                    res_type = resource.get("type", "")
+                    if res_type and res_type not in all_resources:
+                        all_resources.append(res_type)
+            
+            lines.append(f"SUBMODULES {len(submodules)}:")
+            lines.append(" ".join(submodule_names))
+            lines.append("")
+            
+            # Add root module resources
+            for resource in root_module.get("resources", []):
+                res_type = resource.get("type", "")
+                if res_type and res_type not in all_resources:
+                    all_resources.append(res_type)
+            
+            if all_resources:
+                lines.append("RESOURCES:")
+                lines.append(" ".join(all_resources))
+        
+        return "\n".join(lines)
+        
     async def registry_get_module_download_info(
         self,
         namespace: str,

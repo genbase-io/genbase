@@ -35,12 +35,6 @@ export function Sidebar({ className }: SidebarProps) {
       icon: <Layers className="h-5 w-5" />,
       href: "/dashboard",
       tooltip: "Infrastructure Groups",
-    },
-    {
-      name: "Modules",
-      icon: <FileCode className="h-5 w-5" />,
-      href: "/modules",
-      tooltip: "Terraform Modules",
     }
   ];
   

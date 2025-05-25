@@ -5,8 +5,8 @@ import { MessageSquare, Settings } from "lucide-react";
 import { toast } from "sonner";
 
 import { GroupDetail } from "@/components/main-view/group-detail";
-import { VariableSettings } from "@/components/variable-settings";
-import {ChatPanel} from "@/components/chat/chat-panel";
+import { VariableSettings } from "@/components/right-view/settings/variable";
+import {ChatPanel} from "@/components/right-view/chat/chat-panel";
 
 import apiClient from "@/lib/api";
 import { useCurrentProject } from "@/lib/store";

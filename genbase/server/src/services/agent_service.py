@@ -1,5 +1,6 @@
 """
 Agent service handling conversation and tool execution - ASYNC VERSION
+Updated to include form rendering tool
 """
 import json
 import inspect
@@ -18,8 +19,7 @@ from ..agents.tools import AgentTools
 from litellm import ChatCompletionMessageToolCall, Message
 from typing import TypedDict, List, Dict, Any, Optional
 from litellm import Message, ChatCompletionMessageToolCall
-import yaml
-
+from ..config import config
 # Initialize instructor with litellm
 client = instructor.from_litellm(litellm.completion)
 
@@ -46,7 +46,7 @@ class AgentService:
     """
     
     # Default agent settings
-    DEFAULT_MODEL = "gpt-4o"
+    DEFAULT_MODEL = config.DEFAULT_MODEL
     DEFAULT_TEMPERATURE = 0.5
     MAX_ITERATIONS = 10
 
@@ -59,7 +59,8 @@ class AgentService:
         "tf_validate",
         "merge_changes",
         "tf_plan",
-        "sync_with_main"
+        "sync_with_main",
+        "render_form"  # Special tool for UI form rendering
     ]
 
     def __init__(
@@ -139,38 +140,10 @@ class AgentService:
                     "error": "No messages found in the conversation"
                 }
             
-            # Get branch summaries asynchronously
-            main_branch_summary = await AgentTools(
-                project_id=self.project_id, 
-                branch="main"
-            ).get_all_blocks_summary()
-            
-            current_branch_summary = await AgentTools(
-                project_id=self.project_id, 
-                branch=self.session_id
-            ).get_all_blocks_summary()
-
-            # Check sync status in thread since GitService is sync
-            import asyncio
-            sync_status_result = await asyncio.to_thread(
-                GitService.check_branch_sync_status, 
-                self.project_id, 
-                self.session_id
-            )
-            sync_status: bool = sync_status_result['is_in_sync']
-            
-            print(f"main branch summary: {yaml.dump(main_branch_summary, sort_keys=False, default_flow_style=False)}")
-            
             # Prepare system message
             system_message = {
                 "role": "system",
-                "content": self.system_prompt or render_session_prompt(
-                    project_id=self.project_id,
-                    branch=self.session_id,
-                    main_branch_summary=yaml.dump(main_branch_summary, sort_keys=False, default_flow_style=False),
-                    current_branch_summary=yaml.dump(current_branch_summary, sort_keys=False, default_flow_style=False),
-                    branch_sync_status="" if sync_status else "This branch or session is not in sync with the main branch. You may want to run `sync_with_main` tool to update it."
-                )
+                "content": self.system_prompt
             }
             logger.debug(f"system message: {system_message}")
             
@@ -232,47 +205,71 @@ class AgentService:
                     }
                 
                 # Update messages for next iteration
-                assistant_message = {
-                    "role": "assistant",
-                    "content": response.get("content", ""),
-                    "tool_calls": response.get("tool_calls", [])
-                }
-                messages_for_llm.append(Message(**assistant_message))
-                
-                # If no tool calls, we're done
-                if not response.get("tool_calls", []):
-                    done = True
-                    final_message = assistant_message_result.get("message_data", {})
-                    break
+                messages_for_llm.append(Message(
+                    role="assistant",
+                    content=response.get("content", ""),
+                    tool_calls=response.get("tool_calls", [])  # Keep as ChatCompletionMessageToolCall objects
+                ))
+
+                logger.debug(f"assistant message result: {assistant_message_result}")            
+
 
                 logger.debug(f"tool_calls: {tool_calls}")
                 
-                # Process each tool call ASYNCHRONOUSLY
+                # Process each tool call
                 if tool_calls:
                     for tool_call in tool_calls:
                         tool_call_id = tool_call.id
                         function_name = tool_call.function.name or ""
                         function_args = json.loads(tool_call.function.arguments)
+
+
+                        logger.debug(f"Processing tool call: {function_name} with args: {function_args}")
+                        
                         
                         # Check if it's the special "complete_interaction" function
                         if function_name == "complete_interaction":
                             done = True
+                            tool_result, tool_result_message = ChatService.add_tool_result(
+                                project_id=self.project_id,
+                                session_id=self.session_id,
+                                tool_call_id=tool_call_id,
+                                name=function_name,
+                                content=json.dumps({
+                                    "success": True,
+                                    "message": "Interaction completed"
+                                })
+                            )
+
                             break
+            
+                        # Check if it's the special "render_form" function
+                        if function_name == "render_form":
+                            # Return early with form data - UI will handle rendering
+                            return {
+                                "success": True,
+                                "render_form": True,
+                                "form_data": function_args,
+                                "tool_call_id": tool_call_id,
+                                "final_message": assistant_message_result.get("message_data", {})
+                            }
                         
                         function_to_call = await self._get_function_by_name(
                             function_name, 
                             tools_class
                         )
 
+                        logger.debug(f"function to call: {function_to_call}")
                         if not function_to_call:
                             # Function not found, add an error message
-                            tool_result = ChatService.add_tool_result(
+                            tool_result, tool_result_message = ChatService.add_tool_result(
                                 project_id=self.project_id,
                                 session_id=self.session_id,
                                 tool_call_id=tool_call_id,
                                 name=function_name,
                                 content=json.dumps({"error": f"Function '{function_name}' not found"})
                             )
+
                         else:
                             # Execute the function ASYNCHRONOUSLY
                             try:
@@ -280,11 +277,14 @@ class AgentService:
                                 if inspect.iscoroutinefunction(function_to_call):
                                     result = await function_to_call(**function_args)
                                 else:
+                                    import asyncio
                                     # Run sync function in thread
                                     result = await asyncio.to_thread(function_to_call, **function_args)
+
+
                                 
                                 # Add tool result to chat history
-                                tool_result = ChatService.add_tool_result(
+                                tool_result, tool_result_message = ChatService.add_tool_result(
                                     project_id=self.project_id,
                                     session_id=self.session_id,
                                     tool_call_id=tool_call_id,
@@ -292,26 +292,22 @@ class AgentService:
                                     content=json.dumps(result),
                                     commit_id=result.get("commit_id", None),
                                 )
+
+                                logger.debug(f"Tool result for {function_name}: {tool_result_message}")
                                 
                             except Exception as e:
                                 logger.error(f"Error executing function {function_name}: {str(e)}")
                                 # Add error message
-                                tool_result = ChatService.add_tool_result(
+                                tool_result, tool_result_message = ChatService.add_tool_result(
                                     project_id=self.project_id,
                                     session_id=self.session_id,
                                     tool_call_id=tool_call_id,
                                     name=function_name,
                                     content=json.dumps({"error": str(e)})
                                 )
-                        
-                        # Add the tool response to messages for the next LLM call
-                        if tool_result.get("success", False):
-                            messages_for_llm.append(Message(
-                                role="tool", # type: ignore[reportArgumentType]
-                                tool_call_id=tool_call_id,
-                                name=function_name,
-                                content=tool_result.get("message_data", {}).get("content", "")
-                            ))
+
+                        logger.debug(f"Appended tool result message: {tool_result_message}")
+                        messages_for_llm.append(tool_result_message)
                     
                 # If we're not done after processing tool calls, continue the loop
                 if done and not final_message:
@@ -322,6 +318,7 @@ class AgentService:
                     if assistant_messages:
                         final_message = assistant_messages[-1]
             
+
             # Return the result
             return {
                 "success": True,
@@ -346,13 +343,22 @@ class AgentService:
         Call the LLM with the given messages and tools - ASYNC
         """
         try:
+
+            logger.debug(f"all messages: {messages}")
+
+            trimmed_messages = litellm.utils.trim_messages( # !Trims the tool results from the messages
+                messages=messages,
+                model=model,
+                trim_ratio=0.75,
+            )
+
+
             response = await litellm.acompletion(
                 model=model,
                 messages=messages,
                 tools=tools,
                 tool_choice="auto",
                 temperature=temperature,
-                max_tokens=4096
             )
             
             assistant_message: Message = response.choices[0].message # type: ignore[attr-defined]
@@ -467,6 +473,92 @@ class AgentService:
             }
         })
         
+        # Only add render_form tool if it's explicitly included in the tools list
+        if "render_form" in self.tools:
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": "render_form",
+                    "description": "Render a form in the UI to collect user input. Use this when you need additional information from the user to complete a task. The form will pause the conversation until the user submits it.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "title": {
+                                "type": "string",
+                                "description": "Title of the form dialog"
+                            },
+                            "description": {
+                                "type": "string",
+                                "description": "Description text to explain what the form is for"
+                            },
+                            "fields": {
+                                "type": "array",
+                                "description": "Array of form fields to render",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "name": {
+                                            "type": "string",
+                                            "description": "Field name (used as form field key)"
+                                        },
+                                        "label": {
+                                            "type": "string",
+                                            "description": "Field label displayed to user"
+                                        },
+                                        "type": {
+                                            "type": "string",
+                                            "enum": ["text", "textarea", "select", "number", "boolean", "password"],
+                                            "description": "Type of input field"
+                                        },
+                                        "description": {
+                                            "type": "string",
+                                            "description": "Optional description text for the field"
+                                        },
+                                        "required": {
+                                            "type": "boolean",
+                                            "description": "Whether this field is required"
+                                        },
+                                        "defaultValue": {
+                                            "type": "string",
+                                            "description": "Default value for the field"
+                                        },
+                                        "options": {
+                                            "type": "array",
+                                            "description": "Options for select field type",
+                                            "items": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "label": {"type": "string"},
+                                                    "value": {"type": "string"}
+                                                }
+                                            }
+                                        },
+                                        "validation": {
+                                            "type": "object",
+                                            "description": "Validation rules for the field",
+                                            "properties": {
+                                                "min": {"type": "number"},
+                                                "max": {"type": "number"},
+                                                "minLength": {"type": "number"},
+                                                "maxLength": {"type": "number"},
+                                                "pattern": {"type": "string"},
+                                                "message": {"type": "string"}
+                                            }
+                                        }
+                                    },
+                                    "required": ["name", "label", "type"]
+                                }
+                            },
+                            "submitLabel": {
+                                "type": "string",
+                                "description": "Label for the submit button (default: 'Submit')"
+                            }
+                        },
+                        "required": ["title", "description", "fields"]
+                    }
+                }
+            })
+        
         return tools
 
     async def _get_function_by_name(self, function_name: str, tf_tools_instance: AgentTools) -> Optional[Callable]:
@@ -491,5 +583,10 @@ class AgentService:
             async def complete_interaction_dummy(reason):
                 return {"success": True, "message": f"Interaction completed: {reason}"}
             return complete_interaction_dummy
+        
+        # Special case for render_form - this is handled in the main processing loop
+        # We don't need to return a function here since it's intercepted earlier
+        if function_name == "render_form":
+            return None
         
         return None

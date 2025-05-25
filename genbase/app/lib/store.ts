@@ -55,6 +55,12 @@ interface AppState {
   infoPanelPosition: { x: number; y: number };
   setInfoPanelPosition: (position: { x: number; y: number }) => void;
   
+  // Model selection
+  selectedModel: string;
+  setSelectedModel: (model: string) => void;
+  availableModels: string[];
+  setAvailableModels: (models: string[]) => void;
+  
   // Reset state (for logout, etc.)
   resetState: () => void;
 }
@@ -79,6 +85,10 @@ export const useAppStore = create<AppState>()(
       selectedNodeData: null,
       showInfoPanel: false,
       infoPanelPosition: { x: 0, y: 0 },
+      
+      // Model selection
+      selectedModel: 'claude-3-5-sonnet-20241022',
+      availableModels: [],
       
       // Actions
       setCurrentProjectId: (projectId) => set({ currentProjectId: projectId }),
@@ -106,6 +116,10 @@ export const useAppStore = create<AppState>()(
       setShowInfoPanel: (show) => set({ showInfoPanel: show }),
       setInfoPanelPosition: (position) => set({ infoPanelPosition: position }),
       
+      // Model actions
+      setSelectedModel: (model) => set({ selectedModel: model }),
+      setAvailableModels: (models) => set({ availableModels: models }),
+      
       // Reset to initial state
       resetState: () => set({
         selectedGroupPath: null,
@@ -119,6 +133,7 @@ export const useAppStore = create<AppState>()(
         selectedNodeData: null,
         showInfoPanel: false,
         infoPanelPosition: { x: 0, y: 0 },
+        selectedModel: 'claude-3-5-sonnet-20241022',
       }),
     }),
     {
@@ -129,6 +144,7 @@ export const useAppStore = create<AppState>()(
         currentBranch: state.currentBranch,
         currentChatSessionId: state.currentChatSessionId,
         chatEditorContent: state.chatEditorContent,
+        selectedModel: state.selectedModel,
       }),
     }
   )
@@ -206,6 +222,20 @@ export const useChat = () => {
     setChatSessions,
     showChatSessionList,
     setShowChatSessionList,
+  };
+};
+
+export const useModelSelection = () => {
+  const selectedModel = useAppStore(state => state.selectedModel);
+  const setSelectedModel = useAppStore(state => state.setSelectedModel);
+  const availableModels = useAppStore(state => state.availableModels);
+  const setAvailableModels = useAppStore(state => state.setAvailableModels);
+  
+  return { 
+    selectedModel, 
+    setSelectedModel, 
+    availableModels, 
+    setAvailableModels 
   };
 };
 

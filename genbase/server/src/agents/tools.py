@@ -310,7 +310,7 @@ class AgentTools:
                     "error": f"File not found: {file_path}"
                 }
             
-            if not self._check_hcledit_available():
+            if not await self._check_hcledit_available():
                 return {
                     "success": False,
                     "error": "hcledit CLI tool is required. Install: go install github.com/minamijoyo/hcledit@latest"
@@ -405,7 +405,7 @@ class AgentTools:
                 abs_file_path.parent.mkdir(parents=True, exist_ok=True)
                 abs_file_path.touch()
             
-            if not self._check_hcledit_available():
+            if not await self._check_hcledit_available():
                 return {
                     "success": False,
                     "error": "hcledit CLI tool is required"
@@ -553,7 +553,7 @@ class AgentTools:
                     "error": f"File not found: {file_path}"
                 }
             
-            if not self._check_hcledit_available():
+            if not await self._check_hcledit_available():
                 return {
                     "success": False,
                     "error": "hcledit CLI tool is required"

@@ -1,10 +1,11 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Button } from "../ui/button";
-import { Send, Server, Database, FileOutput, Settings, Code, BoxIcon as Module } from "lucide-react";
-import { useChatEditorContent, useCurrentProject } from "../../lib/store";
-import apiClient from "../../lib/api";
+import { Button } from "../../ui/button";
+import { Send, Server, Database, FileOutput, Settings, Code, BoxIcon as Module, Folder } from "lucide-react";
+import { useChatEditorContent, useCurrentProject, useModelSelection } from "../../../lib/store";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../ui/select";
+import apiClient from "../../../lib/api";
 import Config from "@/lib/config";
 
 interface ChatInputProps {
@@ -31,45 +32,78 @@ interface SlashCommand {
 }
 
 
-  // Get highlight class for mention
- export const getMentionHighlightClass = (blockType: string) => {
-    const baseClasses = 'inline-flex items-center px-1.5 py-0.5 rounded-md text-xs font-medium border mx-0.5';
+  // Helper function to generate standardized address format
+  export const generateStandardizedAddress = (blockType: string, block: any): string => {
     switch (blockType) {
       case 'resource':
-        return `${baseClasses} bg-blue-100 text-blue-800 border-blue-200`;
-      case 'data':
-        return `${baseClasses} bg-green-100 text-green-800 border-green-200`;
-      case 'module':
-        return `${baseClasses} bg-purple-100 text-purple-800 border-purple-200`;
-      case 'output':
-        return `${baseClasses} bg-orange-100 text-orange-800 border-orange-200`;
+        return `resource.${block.type || 'unknown'}.${block.name || 'unnamed'}`;
       case 'variable':
-        return `${baseClasses} bg-yellow-100 text-yellow-800 border-yellow-200`;
+        return `variable.${block.name || 'unnamed'}`;
+      case 'locals':
+        return `locals.${block.name || 'unnamed'}`;
+      case 'module':
+        return `module.${block.name || 'unnamed'}`;
+      case 'data':
+        return `data.${block.type || 'unknown'}.${block.name || 'unnamed'}`;
+      case 'output':
+        return `output.${block.name || 'unnamed'}`;
+      case 'provider':
+        return `provider.${block.name || 'unnamed'}`;
       default:
-        return `${baseClasses} bg-gray-100 text-gray-800 border-gray-200`;
+        return `${blockType}.${block.name || 'unnamed'}`;
     }
   };
 
 
-  
-  // Get icon for block type
- export const getBlockIcon = (blockType: string) => {
-    switch (blockType) {
-      case 'resource':
-        return <Server className="h-3 w-3 text-blue-500" />;
-      case 'data':
-        return <Database className="h-3 w-3 text-green-500" />;
-      case 'module':
-        return <Module className="h-3 w-3 text-purple-500" />;
-      case 'output':
-        return <FileOutput className="h-3 w-3 text-orange-500" />;
-      case 'variable':
-        return <Settings className="h-3 w-3 text-yellow-500" />;
-      default:
-        return <Code className="h-3 w-3 text-gray-500" />;
-    }
-  };
-  
+// Update the getBlockIcon function to include group support
+export  const getBlockIcon = (blockType: string) => {
+  switch (blockType) {
+    case 'resource':
+      return <Server className="h-3 w-3 text-blue-500" />;
+    case 'data':
+      return <Database className="h-3 w-3 text-green-500" />;
+    case 'module':
+      return <Module className="h-3 w-3 text-purple-500" />;
+    case 'output':
+      return <FileOutput className="h-3 w-3 text-orange-500" />;
+    case 'variable':
+      return <Settings className="h-3 w-3 text-yellow-500" />;
+    case 'locals':
+      return <Settings className="h-3 w-3 text-amber-500" />;
+    case 'provider':
+      return <Code className="h-3 w-3 text-gray-500" />;
+    case 'group':
+      return <Folder className="h-3 w-3 text-purple-500" />;
+    default:
+      return <Code className="h-3 w-3 text-gray-500" />;
+  }
+};
+
+// Update the getMentionHighlightClass function to include group support
+export const getMentionHighlightClass = (blockType: string) => {
+  const baseClasses = 'inline-flex items-center px-1.5 py-0.5 rounded-md text-xs font-medium border mx-0.5';
+  switch (blockType) {
+    case 'resource':
+      return `${baseClasses} bg-blue-100 text-blue-800 border-blue-200`;
+    case 'data':
+      return `${baseClasses} bg-green-100 text-green-800 border-green-200`;
+    case 'module':
+      return `${baseClasses} bg-purple-100 text-purple-800 border-purple-200`;
+    case 'output':
+      return `${baseClasses} bg-orange-100 text-orange-800 border-orange-200`;
+    case 'variable':
+      return `${baseClasses} bg-yellow-100 text-yellow-800 border-yellow-200`;
+    case 'locals':
+      return `${baseClasses} bg-amber-100 text-amber-800 border-amber-200`;
+    case 'provider':
+      return `${baseClasses} bg-gray-100 text-gray-800 border-gray-200`;
+    case 'group':
+      return `${baseClasses} bg-purple-100 text-purple-800 border-purple-200`;
+    default:
+      return `${baseClasses} bg-gray-100 text-gray-800 border-gray-200`;
+  }
+};
+
 
 export function ChatInput({ onSendMessage, isSending, isDisabled, sessionId }: ChatInputProps) {
   const [isEmpty, setIsEmpty] = useState(true);
@@ -83,10 +117,30 @@ export function ChatInput({ onSendMessage, isSending, isDisabled, sessionId }: C
   const [slashQuery, setSlashQuery] = useState('');
   const { content, setContent, clearContent } = useChatEditorContent(sessionId);
   const { currentProjectId } = useCurrentProject();
+  const { selectedModel, setSelectedModel, availableModels, setAvailableModels } = useModelSelection();
   const isUpdatingFromExternal = useRef(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<HTMLDivElement>(null);
   const isComposing = useRef(false);
+
+  // Load available models
+  useEffect(() => {
+    const loadModels = async () => {
+      try {
+        const models = await apiClient.getAvailableModels(); // Set to true for provider endpoint check
+        setAvailableModels(models);
+        
+        // If current selected model is not in available models, set to first available
+        if (models.length > 0 && !models.includes(selectedModel)) {
+          setSelectedModel(models[0]);
+        }
+      } catch (error) {
+        console.error('Failed to load available models:', error);
+      }
+    };
+
+    loadModels();
+  }, [setAvailableModels, selectedModel, setSelectedModel]);
 
   // Slash commands
   const slashCommands: SlashCommand[] = [
@@ -112,40 +166,8 @@ export function ChatInput({ onSendMessage, isSending, isDisabled, sessionId }: C
     return searchText.includes(slashQuery.toLowerCase());
   });
 
-  // Load infrastructure blocks for mentions
-  useEffect(() => {
-    const loadMentionItems = async () => {
-      if (!currentProjectId) return;
-      
-      try {
-        const codeData = await apiClient.parseProjectCode(currentProjectId, sessionId);
-        const items: MentionItem[] = [];
-        
-        Object.entries(codeData.blocks).forEach(([blockType, blocks]) => {
-          if (Array.isArray(blocks)) {
-            blocks.forEach((block) => {
-              const name = block.name || 'unnamed';
-              const address = block.address || `${blockType}.${name}`;
-            
-              items.push({
-                key: address,
-                address: address,
-                name: name,
-                blockType: blockType || 'unknown',
-                resourceType: block.type || undefined,
-              });
-            });
-          }
-        });
-        
-        setMentionItems(items);
-      } catch (error) {
-        console.error('Failed to load mention items:', error);
-      }
-    };
 
-    loadMentionItems();
-  }, [currentProjectId]);
+
 
   // Filter mentions based on query
   useEffect(() => {
@@ -177,7 +199,6 @@ export function ChatInput({ onSendMessage, isSending, isDisabled, sessionId }: C
     setSelectedSlashIndex(0);
   }, [slashQuery]);
 
-
   // Get plain text content from editor
   const getPlainTextContent = useCallback(() => {
     if (!editorRef.current) return '';
@@ -206,42 +227,107 @@ export function ChatInput({ onSendMessage, isSending, isDisabled, sessionId }: C
     return text;
   }, []);
 
-  // Parse text and create HTML content with highlights
-  const createHighlightedHTML = useCallback((text: string) => {
-    if (!text) return '';
+useEffect(() => {
+  const loadMentionItems = async () => {
+    if (!currentProjectId) return;
     
-    // Split by lines to handle multi-line content
-    const lines = text.split('\n');
-    const htmlLines = lines.map(line => {
-      if (!line) return '<br>';
+    try {
+      // Use the current sessionId for branch, fallback to 'main'
+      const branch = sessionId || 'main';
+      const codeData = await apiClient.parseProjectCode(currentProjectId, branch);
+      const items: MentionItem[] = [];
       
-      // Find all mentions in this line
-      const mentionRegex = /@([a-zA-Z0-9._-]+(?:\.[a-zA-Z0-9._-]+)*)/g;
-      let highlightedLine = line;
-      const matches = Array.from(line.matchAll(mentionRegex));
+      // Track unique group paths for group mentions
+      const groupPaths = new Set<string>();
       
-      // Process matches in reverse order to maintain indices
-      for (let i = matches.length - 1; i >= 0; i--) {
-        const match = matches[i];
-        const mentionAddress = match[1];
-        const mentionItem = mentionItems.find(item => item.address === mentionAddress);
+      Object.entries(codeData.blocks).forEach(([blockType, blocks]) => {
+        // Filter out terraform blocks from mentions
+        if (blockType === 'terraform') return;
         
-        if (mentionItem) {
-          const highlightClass = getMentionHighlightClass(mentionItem.blockType);
-          const mentionHTML = `<span class="${highlightClass}" contenteditable="false" data-mention="${mentionAddress}">@${mentionAddress}</span>`;
-          
-          highlightedLine = highlightedLine.slice(0, match.index) + 
-                           mentionHTML + 
-                           highlightedLine.slice(match.index! + match[0].length);
+        if (Array.isArray(blocks)) {
+          blocks.forEach((block) => {
+            const name = block.name || 'unnamed';
+            // Use the standardized address format directly from the block, or generate it
+            const address = block.address || generateStandardizedAddress(blockType, block);
+            
+            // Add block mention
+            items.push({
+              key: address,
+              address: address,
+              name: name,
+              blockType: blockType || 'unknown',
+              resourceType: block.type || undefined,
+            });
+            
+            // Collect group paths for group mentions
+            if (block._metadata.group_path) {
+              groupPaths.add(block._metadata.group_path);
+            }
+          });
         }
-      }
+      });
       
-      return highlightedLine;
-    });
-    
-    return htmlLines.join('<div></div>');
-  }, [mentionItems]);
+      // Add group mentions with normalized paths (dots instead of slashes)
+      groupPaths.forEach(groupPath => {
+        const groupName = groupPath.split('/').pop() || groupPath;
+        // Replace slashes with dots for consistency
+        const normalizedPath = groupPath.replace(/\//g, '.');
+        const groupAddress = `group.${normalizedPath}`;
+        
+        items.push({
+          key: groupAddress,
+          address: groupAddress,
+          name: groupName,
+          blockType: 'group',
+          resourceType: undefined,
+        });
+      });
+      
+      setMentionItems(items);
+    } catch (error) {
+      console.error('Failed to load mention items:', error);
+    }
+  };
 
+  loadMentionItems();
+}, [currentProjectId, sessionId]);
+
+// Update the mention regex pattern to handle the normalized paths
+const createHighlightedHTML = useCallback((text: string) => {
+  if (!text) return '';
+  
+  // Split by lines to handle multi-line content
+  const lines = text.split('\n');
+  const htmlLines = lines.map(line => {
+    if (!line) return '<br>';
+    
+    // Updated regex to match group mentions with dots
+    // This pattern matches: @word.word.word (any number of segments)
+    const mentionRegex = /@([a-zA-Z_][a-zA-Z0-9._-]*(?:\.[a-zA-Z0-9._-]+)*)/g;
+    let highlightedLine = line;
+    const matches = Array.from(line.matchAll(mentionRegex));
+    
+    // Process matches in reverse order to maintain indices
+    for (let i = matches.length - 1; i >= 0; i--) {
+      const match = matches[i];
+      const mentionAddress = match[1];
+      const mentionItem = mentionItems.find(item => item.address === mentionAddress);
+      
+      if (mentionItem) {
+        const highlightClass = getMentionHighlightClass(mentionItem.blockType);
+        const mentionHTML = `<span class="${highlightClass}" contenteditable="false" data-mention="${mentionAddress}">@${mentionAddress}</span>`;
+        
+        highlightedLine = highlightedLine.slice(0, match.index) + 
+                         mentionHTML + 
+                         highlightedLine.slice(match.index! + match[0].length);
+      }
+    }
+    
+    return highlightedLine;
+  });
+  
+  return htmlLines.join('<div></div>');
+}, [mentionItems]);
 
   // Close all menus
   const closeAllMenus = () => {
@@ -480,7 +566,7 @@ export function ChatInput({ onSendMessage, isSending, isDisabled, sessionId }: C
       event.preventDefault();
       handleSend();
     }
-  }, [handleSend, showSlashMenu, showMentionMenu, filteredMentions, filteredSlashCommands, selectedMentionIndex, selectedSlashIndex]);
+  }, [handleSend, showSlashMenu, showMentionMenu, filteredMentions, filteredSlashCommands, selectedMentionIndex, selectedSlashIndex, handleMentionSelect, handleSlashCommand]);
 
   // Handle paste events to strip formatting
   const handlePaste = useCallback((event: React.ClipboardEvent) => {
@@ -619,11 +705,24 @@ export function ChatInput({ onSendMessage, isSending, isDisabled, sessionId }: C
       </div>
       
       {/* Bottom Action Bar */}
-      <div className="flex items-center justify-between px-3 py-2 border-t border-border/50">
+      <div className="flex items-center justify-between px-3 py-2 border-0 border-border/50">
         <div className="flex items-center space-x-2">
-          <span className="text-xs text-muted-foreground">
-            Enter to send, ↑↓ to navigate menus
-          </span>
+          {/* Model Selector */}
+   <Select value={selectedModel} onValueChange={setSelectedModel} >
+  <SelectTrigger className="w-28 h-5 text-xs p-1 min-h-0 [&>span]:truncate [&>span]:block">
+    <SelectValue placeholder="Model" />
+  </SelectTrigger>
+  <SelectContent >
+    {availableModels.map((model) => (
+      <SelectItem key={model} value={model} className="text-xs py-1">
+        {model}
+      </SelectItem>
+    ))}
+  </SelectContent>
+</Select>
+
+
+         
         </div>
         
         <Button 

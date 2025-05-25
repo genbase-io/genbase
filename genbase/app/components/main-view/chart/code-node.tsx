@@ -193,12 +193,8 @@ export const CodeNode: React.FC<NodeProps<ExtendedCodeNodeData>> = ({ id, data, 
 
   // Generate the reference string for this block
   const generateBlockReference = () => {
-    const blockType = data.blockType;
-    if(blockType === 'resource') {
-      return `@${data.resourceType}.${data.label}`;
-    } else {
-      return `@${blockType}.${data.label}`;
-    }
+    return `@${data.address}`;
+
   };
 
 

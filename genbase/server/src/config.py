@@ -28,7 +28,7 @@ class Config(BaseModel):
 
     CORS_ORIGINS: List[str] = [origin.strip() for origin in os.getenv("CORS_ORIGINS", "http://localhost:3000,https://console.genbase.io").split(",")]
 
-    DEFAULT_MODEL: str = os.getenv("DEFAULT_MODEL", "gpt-4o")
+    DEFAULT_MODEL: str = os.getenv("DEFAULT_MODEL", "claude-3-7-sonnet-20250219")
 
 
     MAIN_BRANCH: str = "main"
